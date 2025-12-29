@@ -131,12 +131,29 @@ body {
     z-index: 1100;
 }
 
-/* ===== LEGEND ===== */
-#legend {
-    display: none;
-    border-top: 1px solid #ddd;
-    padding-top: 10px;
-    font-size: 13px;
+/* ===== DRAW CANVAS ===== */
+#drawCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    pointer-events: auto;
+}
+
+/* ===== DRAW TOOLBAR ===== */
+#draw-toolbar {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1300;
+    background: #fff;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    font-size: 14px;
+}
+#draw-toolbar button {
+    margin-right: 5px;
 }
 </style>
 </head>
@@ -147,6 +164,16 @@ body {
 <div id="left-settings-btn" class="rail-btn">⚙</div>
 
 <div id="map"></div>
+
+<!-- DRAWING CANVAS -->
+<canvas id="drawCanvas"></canvas>
+
+<!-- DRAWING TOOLBAR -->
+<div id="draw-toolbar">
+  <button onclick="setDrawMode('line')">Линия</button>
+  <button onclick="setDrawMode('arrow')">Стрелка</button>
+  <button onclick="clearCanvas()">Очистить</button>
+</div>
 
 <div id="topright-controls">
     <strong>Base layer</strong>
@@ -257,27 +284,19 @@ const toggleLayer = (name, on) => {
     on ? layers[name].addTo(map) : map.removeLayer(layers[name]);
 };
 
-const tForts = document.getElementById('toggle-forts');
-const tDitches = document.getElementById('toggle-ditches');
-const tTeeth = document.getElementById('toggle-teeth');
-const tWire = document.getElementById('toggle-wire');
-const tControl = document.getElementById('toggle-control');
-const tUkraine = document.getElementById('toggle-ukraine');
-const tRussia = document.getElementById('toggle-russia');
-
-tForts.onchange = e =>
+document.getElementById('toggle-forts').onchange = e =>
     ['Ditches', 'Teeth', 'Wire'].forEach(n => toggleLayer(n, e.target.checked));
 
-tDitches.onchange = e => toggleLayer('Ditches', e.target.checked);
-tTeeth.onchange   = e => toggleLayer('Teeth', e.target.checked);
-tWire.onchange    = e => toggleLayer('Wire', e.target.checked);
+document.getElementById('toggle-ditches').onchange = e => toggleLayer('Ditches', e.target.checked);
+document.getElementById('toggle-teeth').onchange   = e => toggleLayer('Teeth', e.target.checked);
+document.getElementById('toggle-wire').onchange    = e => toggleLayer('Wire', e.target.checked);
 
-tControl.onchange = e => {
+document.getElementById('toggle-control').onchange = e => {
     toggleLayer('Ukraine', e.target.checked);
     toggleLayer('Russia', e.target.checked);
 };
-tUkraine.onchange = e => toggleLayer('Ukraine', e.target.checked);
-tRussia.onchange  = e => toggleLayer('Russia', e.target.checked);
+document.getElementById('toggle-ukraine').onchange = e => toggleLayer('Ukraine', e.target.checked);
+document.getElementById('toggle-russia').onchange  = e => toggleLayer('Russia', e.target.checked);
 
 /* ===== UI ===== */
 const settingsBtn = document.getElementById('left-settings-btn');
@@ -294,10 +313,68 @@ infoBtn.onclick = () => {
     info.style.display = info.style.display === 'flex' ? 'none' : 'flex';
 };
 
-document.getElementById('legend-toggle').onclick = () => {
-    const l = document.getElementById('legend');
-    l.style.display = l.style.display === 'block' ? 'none' : 'block';
-};
+/* ===== DRAWING CANVAS ===== */
+const drawCanvas = document.getElementById('drawCanvas');
+const drawCtx = drawCanvas.getContext('2d');
+let drawMode = 'line';
+let isDrawing = false;
+let startX = 0, startY = 0;
+
+function resizeCanvas() {
+  const size = map.getSize();
+  drawCanvas.width = size.x;
+  drawCanvas.height = size.y;
+}
+map.on('resize', resizeCanvas);
+map.on('zoomend', resizeCanvas);
+map.on('moveend', resizeCanvas);
+resizeCanvas();
+
+drawCanvas.addEventListener('mousedown', e => {
+  isDrawing = true;
+  startX = e.offsetX;
+  startY = e.offsetY;
+});
+
+drawCanvas.addEventListener('mouseup', e => {
+  if (!isDrawing) return;
+  isDrawing = false;
+  const endX = e.offsetX;
+  const endY = e.offsetY;
+
+  if (drawMode === 'line') drawLine(startX, startY, endX, endY);
+  else if (drawMode === 'arrow') drawArrow(startX, startY, endX, endY);
+});
+
+function drawLine(x1, y1, x2, y2) {
+  drawCtx.strokeStyle = 'red';
+  drawCtx.lineWidth = 2;
+  drawCtx.beginPath();
+  drawCtx.moveTo(x1, y1);
+  drawCtx.lineTo(x2, y2);
+  drawCtx.stroke();
+}
+
+function drawArrow(x1, y1, x2, y2) {
+  drawLine(x1, y1, x2, y2);
+  const headlen = 10;
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  drawCtx.beginPath();
+  drawCtx.moveTo(x2, y2);
+  drawCtx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
+  drawCtx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
+  drawCtx.lineTo(x2, y2);
+  drawCtx.fillStyle = 'red';
+  drawCtx.fill();
+}
+
+function setDrawMode(mode) {
+  drawMode = mode;
+}
+
+function clearCanvas() {
+  drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+}
 </script>
 
 </body>
