@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8" />
 <title>VPI</title>
@@ -137,7 +137,7 @@ body {
     top: 0;
     left: 0;
     z-index: 1000;
-    pointer-events: auto;
+    pointer-events: none; /* карта снова получает события */
 }
 
 /* ===== DRAW TOOLBAR ===== */
@@ -330,15 +330,19 @@ map.on('zoomend', resizeCanvas);
 map.on('moveend', resizeCanvas);
 resizeCanvas();
 
+/* включаем pointer-events только во время рисования */
 drawCanvas.addEventListener('mousedown', e => {
+  drawCanvas.style.pointerEvents = 'auto';
   isDrawing = true;
   startX = e.offsetX;
   startY = e.offsetY;
 });
 
 drawCanvas.addEventListener('mouseup', e => {
+  drawCanvas.style.pointerEvents = 'none';
   if (!isDrawing) return;
   isDrawing = false;
+
   const endX = e.offsetX;
   const endY = e.offsetY;
 
