@@ -251,23 +251,6 @@ addGeoJSON(
     }
 );
 
-/* Defence */
-addGeoJSON(
-    'https://playframap.github.io/data/ditches.geojson',
-    'Ditches',
-    { pane: 'fortPane', style: { color: '#ffc300', weight: 1.5 } }
-);
-addGeoJSON(
-    'https://playframap.github.io/data/teeth.geojson',
-    'Teeth',
-    { pane: 'fortPane', style: { color: '#00ffff', weight: 1.5 } }
-);
-addGeoJSON(
-    'https://playframap.github.io/data/wire.geojson',
-    'Wire',
-    { pane: 'fortPane', style: { color: '#bcbcbc', weight: 1.5 } }
-);
-
 /* ===== TOGGLES ===== */
 const toggleLayer = (name, on) => {
     if (!layers[name]) return;
