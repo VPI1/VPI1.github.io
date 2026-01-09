@@ -1,383 +1,143 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="utf-8" />
-<title>VPI</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-
+<meta charset="UTF-8">
+<title>ВПИ – Калькулятор боя</title>
 <style>
-/* ===== BASE ===== */
-html, body {
-    margin: 0;
-    height: 100%;
-}
 body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: #eee;
+    padding: 20px;
 }
-#map {
-    height: 100%;
+h1 { color: #7dd3fc; }
+section {
+    border: 1px solid #333;
+    padding: 15px;
+    margin-bottom: 20px;
 }
-
-/* ===== LEAFLET PANES ===== */
-.leaflet-pane.leaflet-tile-pane { z-index: 200; }
-.leaflet-pane.leaflet-overlay-pane { z-index: 400; }
-.leaflet-pane.leaflet-controlPane { z-index: 500; }
-.leaflet-pane.leaflet-fortPane { z-index: 600; }
-
-/* ===== LEFT BUTTONS ===== */
-.rail-btn {
-    position: absolute;
-    left: 12px;
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    background: #2c2c2c;
-    color: #fff;
-    font-size: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 1200;
-}
-#left-info-btn { bottom: 80px; }
-#left-settings-btn { bottom: 28px; }
-
-/* ===== SETTINGS PANEL ===== */
-#topright-controls {
-    position: absolute;
-    top: 10px;
-    left: 64px;
-    width: 300px;
-    background: #ffffff;
-    color: #111;
-    border-radius: 14px;
-    padding: 14px;
-    font-size: 14px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.35);
-    z-index: 1100;
-    display: none;
-}
-#topright-controls strong {
+label {
     display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: #777;
-    margin: 14px 0 8px;
+    margin-top: 8px;
 }
-#topright-controls select {
+input, select {
     width: 100%;
-    padding: 6px;
-    border-radius: 6px;
-    border: 1px solid #ccc;
+    padding: 4px;
+    background: #222;
+    color: #eee;
+    border: 1px solid #444;
 }
-
-/* ===== TOGGLES ===== */
-.control-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 0;
-    font-size: 14px;
-}
-.control-row.sub {
-    padding-left: 14px;
-    color: #444;
-}
-.control-row input[type="checkbox"] {
-    appearance: none;
-    width: 44px;
-    height: 24px;
-    background: #cfcfcf;
-    border-radius: 12px;
-    position: relative;
-    cursor: pointer;
-}
-.control-row input[type="checkbox"]::before {
-    content: "";
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 18px;
-    height: 18px;
-    background: #fff;
-    border-radius: 50%;
-    transition: transform .2s;
-}
-.control-row input[type="checkbox"]:checked {
-    background: #2f3146;
-}
-.control-row input[type="checkbox"]:checked::before {
-    transform: translateX(20px);
-}
-
-/* ===== INFO PANEL ===== */
-#info-overlay {
-    position: absolute;
-    bottom: 28px;
-    left: 64px;
-    width: 300px;
-    max-height: 70%;
-    background: rgba(255,255,255,0.97);
-    border-radius: 12px;
-    padding: 12px;
-    display: none;
-    flex-direction: column;
-    gap: 10px;
-    overflow-y: auto;
-    box-shadow: 0 12px 32px rgba(0,0,0,.35);
-    z-index: 1100;
-}
-
-/* ===== DRAW CANVAS ===== */
-#drawCanvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 1000;
-    pointer-events: none; /* карта снова получает события */
-}
-
-/* ===== DRAW TOOLBAR ===== */
-#draw-toolbar {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 1300;
-    background: #fff;
+button {
+    margin-top: 20px;
     padding: 10px;
-    border-radius: 8px;
-    box-shadow: 0 0 10px rgba(0,0,0,0.3);
-    font-size: 14px;
+    width: 100%;
+    background: #2563eb;
+    color: white;
+    border: none;
+    font-size: 16px;
 }
-#draw-toolbar button {
-    margin-right: 5px;
+.result {
+    margin-top: 20px;
+    font-size: 18px;
 }
 </style>
 </head>
-
 <body>
 
-<div id="left-info-btn" class="rail-btn">i</div>
-<div id="left-settings-btn" class="rail-btn">⚙</div>
+<h1>Военно-Политическая Игра — Бой</h1>
 
-<div id="map"></div>
+<section>
+<h2>Общие параметры</h2>
+<label>Местность обороны</label>
+<select id="terrain">
+    <option value="1.0">Равнина</option>
+    <option value="1.2">Лес</option>
+    <option value="1.3">Город</option>
+    <option value="1.4">Горы</option>
+</select>
+</section>
 
-<!-- DRAWING CANVAS -->
-<canvas id="drawCanvas"></canvas>
+<section>
+<h2>Атакующая сторона</h2>
+<label>Количество солдат</label>
+<input id="a_soldiers" type="number" value="10000">
 
-<!-- DRAWING TOOLBAR -->
-<div id="draw-toolbar">
-  <button onclick="setDrawMode('line')">Линия</button>
-  <button onclick="setDrawMode('arrow')">Стрелка</button>
-  <button onclick="clearCanvas()">Очистить</button>
-</div>
+<label>Технологии (0.6–1.4)</label>
+<input id="a_tech" type="number" step="0.1" value="1.0">
 
-<div id="topright-controls">
-    <strong>Base layer</strong>
-    <select id="baselayer-select">
-        <option value="googleHybrid">Hybrid</option>
-        <option value="googleSatellite">Satellite</option>
-        <option value="esriSatellite">ESRI</option>
-        <option value="osm">OSM</option>
-    </select>
+<label>Управление (0.5–1.3)</label>
+<input id="a_cmd" type="number" step="0.1" value="1.0">
 
-    <strong>Defence lines</strong>
-    <label class="control-row">Show defence lines
-        <input type="checkbox" id="toggle-forts" checked>
-    </label>
-    <label class="control-row sub">Ditches <input type="checkbox" id="toggle-ditches" checked></label>
-    <label class="control-row sub">Teeth <input type="checkbox" id="toggle-teeth" checked></label>
-    <label class="control-row sub">Wire <input type="checkbox" id="toggle-wire" checked></label>
+<label>Логистика (0.4–1.2)</label>
+<input id="a_log" type="number" step="0.1" value="1.0">
 
-    <strong>Control</strong>
-    <label class="control-row">Show control
-        <input type="checkbox" id="toggle-control" checked>
-    </label>
-    <label class="control-row sub">Ukraine <input type="checkbox" id="toggle-ukraine" checked></label>
-    <label class="control-row sub">Russia <input type="checkbox" id="toggle-russia" checked></label>
-</div>
+<label>Мораль солдат (0.3–1.4)</label>
+<input id="a_mor" type="number" step="0.1" value="1.0">
+</section>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<section>
+<h2>Обороняющаяся сторона</h2>
+<label>Количество солдат</label>
+<input id="d_soldiers" type="number" value="8000">
+
+<label>Инженерная подготовка (0.8–1.4)</label>
+<input id="d_eng" type="number" step="0.1" value="1.0">
+
+<label>ПВО (0.7–1.3)</label>
+<input id="d_aa" type="number" step="0.1" value="1.0">
+
+<label>Логистика (0.6–1.2)</label>
+<input id="d_log" type="number" step="0.1" value="1.0">
+
+<label>Мораль солдат (0.4–1.3)</label>
+<input id="d_mor" type="number" step="0.1" value="1.0">
+</section>
+
+<button onclick="calculate()">Рассчитать бой</button>
+
+<div class="result" id="output"></div>
 
 <script>
-/* ===== MAP ===== */
-const map = L.map('map', { preferCanvas: true })
-    .setView([48.6857, 35.828], 6);
+function calculate() {
 
-map.createPane('controlPane');
-map.createPane('fortPane');
+    const terrain = parseFloat(document.getElementById("terrain").value);
 
-/* ===== BASE LAYERS ===== */
-const baseLayers = {
-    googleHybrid: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'),
-    googleSatellite: L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'),
-    esriSatellite: L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-    ),
-    osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')
-};
-baseLayers.googleHybrid.addTo(map);
+    const aSold = parseFloat(document.getElementById("a_soldiers").value);
+    const dSold = parseFloat(document.getElementById("d_soldiers").value);
 
-document.getElementById('baselayer-select').onchange = e => {
-    Object.values(baseLayers).forEach(l => map.removeLayer(l));
-    baseLayers[e.target.value].addTo(map);
-};
+    const aNum = Math.min(1.3, aSold / dSold);
+    const dNum = Math.min(1.3, dSold / aSold);
 
-/* ===== GEOJSON ===== */
-const layers = {};
-function addGeoJSON(url, name, options) {
-    fetch(url)
-        .then(r => r.json())
-        .then(d => {
-            layers[name] = L.geoJSON(d, options).addTo(map);
-        });
-}
+    const KA =
+        1.0 *
+        parseFloat(aNum) *
+        parseFloat(a_tech.value) *
+        parseFloat(a_cmd.value) *
+        parseFloat(a_log.value) *
+        parseFloat(a_mor.value);
 
-/* Control */
-addGeoJSON(
-    'https://VPI1.github.io/data/vpigray.geojson',
-    'Ukraine',
-    {
-        pane: 'controlPane',
-        style: {
-            color: '#f7f7f7',
-            weight: 1.6,
-            fillColor: '#969696',
-            fillOpacity: 0.3
-        }
-    }
-);
-addGeoJSON(
-    'https://VPI1.github.io/data/vpirus.geojson',
-    'Russia',
-    {
-        pane: 'controlPane',
-        style: {
-            color: '#ff0000',
-            weight: 1.6,
-            fillColor: '#ca0000',
-            fillOpacity: 0.3
-        }
-    }
-);
+    const KD =
+        1.0 *
+        terrain *
+        parseFloat(dNum) *
+        parseFloat(d_eng.value) *
+        parseFloat(d_aa.value) *
+        parseFloat(d_log.value) *
+        parseFloat(d_mor.value);
 
-addGeoJSON(
-    'https://VPI1.github.io/data/npu.geojson',
-    'Russia',
-    {
-        pane: 'controlPane',
-        style: {
-            color: '#848484',
-            weight: 1.6,
-            fillColor: '#ffffff',
-            fillOpacity: 0.3
-        }
-    }
-);
+    const ratio = KA / KD;
 
-/* ===== TOGGLES ===== */
-const toggleLayer = (name, on) => {
-    if (!layers[name]) return;
-    on ? layers[name].addTo(map) : map.removeLayer(layers[name]);
-};
+    let text = "";
+    if (ratio < 0.8) text = "Атака захлёбывается";
+    else if (ratio < 1.1) text = "Позиционная мясорубка";
+    else if (ratio < 1.4) text = "Медленный прорыв";
+    else if (ratio < 1.8) text = "Оперативный прорыв";
+    else text = "Коллапс обороны";
 
-document.getElementById('toggle-forts').onchange = e =>
-    ['Ditches', 'Teeth', 'Wire'].forEach(n => toggleLayer(n, e.target.checked));
-
-document.getElementById('toggle-ditches').onchange = e => toggleLayer('Ditches', e.target.checked);
-document.getElementById('toggle-teeth').onchange   = e => toggleLayer('Teeth', e.target.checked);
-document.getElementById('toggle-wire').onchange    = e => toggleLayer('Wire', e.target.checked);
-
-document.getElementById('toggle-control').onchange = e => {
-    toggleLayer('Ukraine', e.target.checked);
-    toggleLayer('Russia', e.target.checked);
-};
-document.getElementById('toggle-ukraine').onchange = e => toggleLayer('Ukraine', e.target.checked);
-document.getElementById('toggle-russia').onchange  = e => toggleLayer('Russia', e.target.checked);
-
-/* ===== UI ===== */
-const settingsBtn = document.getElementById('left-settings-btn');
-const infoBtn = document.getElementById('left-info-btn');
-const settings = document.getElementById('topright-controls');
-const info = document.getElementById('info-overlay');
-
-settingsBtn.onclick = () => {
-    info.style.display = 'none';
-    settings.style.display = settings.style.display === 'block' ? 'none' : 'block';
-};
-infoBtn.onclick = () => {
-    settings.style.display = 'none';
-    info.style.display = info.style.display === 'flex' ? 'none' : 'flex';
-};
-
-/* ===== DRAWING CANVAS ===== */
-const drawCanvas = document.getElementById('drawCanvas');
-const drawCtx = drawCanvas.getContext('2d');
-let drawMode = 'line';
-let isDrawing = false;
-let startX = 0, startY = 0;
-
-function resizeCanvas() {
-  const size = map.getSize();
-  drawCanvas.width = size.x;
-  drawCanvas.height = size.y;
-}
-map.on('resize', resizeCanvas);
-map.on('zoomend', resizeCanvas);
-map.on('moveend', resizeCanvas);
-resizeCanvas();
-
-/* включаем pointer-events только во время рисования */
-drawCanvas.addEventListener('mousedown', e => {
-  drawCanvas.style.pointerEvents = 'auto';
-  isDrawing = true;
-  startX = e.offsetX;
-  startY = e.offsetY;
-});
-
-drawCanvas.addEventListener('mouseup', e => {
-  drawCanvas.style.pointerEvents = 'none';
-  if (!isDrawing) return;
-  isDrawing = false;
-
-  const endX = e.offsetX;
-  const endY = e.offsetY;
-
-  if (drawMode === 'line') drawLine(startX, startY, endX, endY);
-  else if (drawMode === 'arrow') drawArrow(startX, startY, endX, endY);
-});
-
-function drawLine(x1, y1, x2, y2) {
-  drawCtx.strokeStyle = 'red';
-  drawCtx.lineWidth = 2;
-  drawCtx.beginPath();
-  drawCtx.moveTo(x1, y1);
-  drawCtx.lineTo(x2, y2);
-  drawCtx.stroke();
-}
-
-function drawArrow(x1, y1, x2, y2) {
-  drawLine(x1, y1, x2, y2);
-  const headlen = 10;
-  const angle = Math.atan2(y2 - y1, x2 - x1);
-  drawCtx.beginPath();
-  drawCtx.moveTo(x2, y2);
-  drawCtx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
-  drawCtx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
-  drawCtx.lineTo(x2, y2);
-  drawCtx.fillStyle = 'red';
-  drawCtx.fill();
-}
-
-function setDrawMode(mode) {
-  drawMode = mode;
-}
-
-function clearCanvas() {
-  drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+    document.getElementById("output").innerHTML =
+        "Коэффициент атаки: " + KA.toFixed(2) + "<br>" +
+        "Коэффициент защиты: " + KD.toFixed(2) + "<br>" +
+        "<b>Итог: " + text + "</b>";
 }
 </script>
 
