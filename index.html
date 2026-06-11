@@ -22,10 +22,8 @@ html, body {
   position: fixed; inset: 0; z-index: 9999;
   background: radial-gradient(ellipse at center, #0a1428 0%, #04080f 100%);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 0;
 }
 #login-screen.hidden { display: none; }
-
 .login-title {
   font-size: 32px; font-weight: 800; color: #e8f0f8; letter-spacing: 2px;
   text-align: center; margin-bottom: 6px;
@@ -34,32 +32,22 @@ html, body {
   font-size: 14px; color: #3a5870; letter-spacing: 1px; text-align: center;
   margin-bottom: 48px;
 }
-
-.faction-cards {
-  display: flex; gap: 20px; margin-bottom: 36px;
-}
+.faction-cards { display: flex; gap: 20px; margin-bottom: 36px; }
 .fc {
   width: 200px; padding: 28px 20px; border-radius: 6px; cursor: pointer;
   text-align: center; transition: transform .15s, box-shadow .15s;
   border: 2px solid transparent;
 }
 .fc:hover { transform: translateY(-3px); }
-.fc.ua {
-  background: #07152e; border-color: #1a4070;
-  box-shadow: 0 4px 24px rgba(10,60,160,.3);
-}
+.fc.ua { background: #07152e; border-color: #1a4070; box-shadow: 0 4px 24px rgba(10,60,160,.3); }
 .fc.ua:hover { border-color: #3060a0; box-shadow: 0 8px 32px rgba(10,60,160,.5); }
-.fc.ru {
-  background: #200808; border-color: #5a1010;
-  box-shadow: 0 4px 24px rgba(160,10,10,.3);
-}
+.fc.ru { background: #200808; border-color: #5a1010; box-shadow: 0 4px 24px rgba(160,10,10,.3); }
 .fc.ru:hover { border-color: #8a2020; box-shadow: 0 8px 32px rgba(160,10,10,.5); }
 .fc-flag  { font-size: 48px; margin-bottom: 12px; }
 .fc-name  { font-size: 18px; font-weight: 700; color: #e0e8f0; margin-bottom: 4px; }
 .fc-sub   { font-size: 12px; color: #4a6888; line-height: 1.5; }
 .fc.ua.active { border-color: #4a90d8; background: #0a1e3a; }
 .fc.ru.active { border-color: #d84a4a; background: #280a0a; }
-
 .login-pwd-box {
   width: 440px; padding: 28px 32px; background: #08101e; border: 1px solid #1a3050;
   border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.6);
@@ -103,9 +91,7 @@ html, body {
 .tb-title    { font-size: 15px; font-weight: 700; color: #5ab0d0; letter-spacing: 0.5px; white-space: nowrap; }
 .tb-subtitle { font-size: 11px; color: #283848; white-space: nowrap; margin-top: 1px; }
 .tb-sep      { width: 1px; height: 28px; background: #182a40; flex-shrink: 0; }
-.faction-pill {
-  font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 3px; white-space: nowrap;
-}
+.faction-pill { font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 3px; white-space: nowrap; }
 .fp-ua { background: #08182e; border: 1px solid #1a3858; color: #5090c8; }
 .fp-ru { background: #1a0808; border: 1px solid #3a1010; color: #c85050; }
 #clock-d { font-size: 11px; color: #304858; font-family: 'Consolas', monospace; }
@@ -159,7 +145,6 @@ html, body {
 .ct-ru   { background: #260808; color: #cc4a4a; border: 1px solid #481818; }
 .ct-typ  { background: #0e1828; color: #4a6880; border: 1px solid #182a40; }
 .cmd-drag-hint { font-size: 11px; color: #2a5060; font-style: italic; }
-
 .stats { display: grid; gap: 11px; margin-bottom: 14px; }
 .st-row { }
 .st-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
@@ -168,7 +153,6 @@ html, body {
 .st-sub { font-size: 11px; color: #243848; font-weight: 400; }
 .st-bar { height: 5px; background: #0e1828; border-radius: 3px; overflow: hidden; }
 .st-fil { height: 100%; border-radius: 3px; transition: width .4s; }
-
 .cmd-pos { font-size: 11px; color: #1e3848; font-family: 'Consolas', monospace; margin-top: 4px; }
 
 /* Forces tab */
@@ -204,20 +188,10 @@ html, body {
 .cmd-rp  { font-size: 10px; color: #1e3848; font-family: 'Consolas', monospace; width: 28px; text-align: right; }
 
 /* ══════════════════════════════════════════════════════
-   UNIT MARKERS
+   NATO UNIT MARKERS
 ══════════════════════════════════════════════════════ */
-.um {
-  width: 32px; height: 32px; border-radius: 4px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px; font-weight: 800; cursor: pointer; position: relative;
-  box-shadow: 0 2px 8px rgba(0,0,0,.8); user-select: none;
-}
-.um.ua { background: #0b2a6e; color: #ffd060; border: 2px solid #ffd060; }
-.um.ru { background: #7a0e0e; color: #ffb8b8; border: 2px solid #ff5050; }
-.um.sel.ua { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(90,176,208,.2), 0 2px 10px rgba(0,0,0,.9); }
-.um.sel.ru { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255,80,80,.2), 0 2px 10px rgba(0,0,0,.9); }
-.um-drag { cursor: grab; }
-.um-drag:active { cursor: grabbing; }
+.nato-drag         { cursor: grab; }
+.nato-drag:active  { cursor: grabbing; }
 
 /* ══════════════════════════════════════════════════════
    LEGEND
@@ -325,15 +299,14 @@ html, body {
       <div class="obj-r"><span class="obj-t t-ru">🇷🇺 ZVO</span><span class="obj-tx">Capture Pokrovsk and advance to the Dnipropetrovsk oblast border.</span></div>
       <div class="brief-sep"></div>
       <div class="brief-p" style="font-size:12px;color:#2a4860">
-        <b style="color:#3a6080">How to play:</b> Drag any unit marker on the map to reposition it.
-        Each dot on the map represents a soldier in that commander's force.
-        Click a marker to view unit details in the Commander tab.
+        <b style="color:#3a6080">How to play:</b> Drag any unit marker on the map to reposition it — or drag directly from any soldier dot cloud.
+        Each dot represents one soldier. Click a marker to view unit details.
       </div>
     </div>
 
     <div id="tab-unit" style="display:none">
       <div id="unit-panel">
-        <div class="no-sel">No commander selected.<br>Click a unit marker on the map.</div>
+        <div class="no-sel">No unit selected.<br>Click a unit marker on the map.</div>
       </div>
     </div>
 
@@ -348,11 +321,17 @@ html, body {
 <div id="legend">
   <h4>Legend</h4>
   <div class="li"><div class="li-l" style="background:#ff2828"></div> Frontline (Oct 2024)</div>
-  <div class="li"><div class="li-d" style="background:#0b2a6e;border:1px solid #ffd060"></div> UA unit marker (drag to move)</div>
-  <div class="li"><div class="li-d" style="background:#7a0e0e;border:1px solid #ff5050"></div> RU unit marker (drag to move)</div>
+  <div class="li">
+    <svg width="20" height="13" viewBox="0 0 20 13"><rect x="1" y="1" width="18" height="11" fill="#0050A0" stroke="#000" stroke-width="1.2" rx="1"/></svg>
+    UA unit (NATO friendly)
+  </div>
+  <div class="li">
+    <svg width="18" height="18" viewBox="0 0 18 18"><polygon points="9,1 17,9 9,17 1,9" fill="#CC1111" stroke="#000" stroke-width="1.2"/></svg>
+    RU unit (NATO hostile)
+  </div>
   <div class="ls"></div>
-  <div class="li"><div class="li-d" style="background:#4a90ff;border-radius:50%;opacity:.8"></div> UA soldier (dot)</div>
-  <div class="li"><div class="li-d" style="background:#ff4a4a;border-radius:50%;opacity:.8"></div> RU soldier (dot)</div>
+  <div class="li"><div class="li-d" style="background:#4a90ff;border-radius:50%;opacity:.8"></div> UA soldier</div>
+  <div class="li"><div class="li-d" style="background:#ff4a4a;border-radius:50%;opacity:.8"></div> RU soldier</div>
 </div>
 
 <div id="notifs"></div>
@@ -361,43 +340,42 @@ html, body {
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════
-const PASSWORDS   = { ua: '1eDp0Zs8', ru: 'It8En5a6' };
-const SAVE_KEY    = 'pokrovsk_v5';
-const AUTH_KEY    = 'pokrovsk_auth';
-const SCENARIO_T  = new Date(2024, 9, 1, 6, 0, 0).getTime();
-const MN          = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-const UNIT_SYM    = { infantry:'I', mech:'M', armor:'T', artillery:'A', special:'S' };
-const UNIT_LABEL  = { infantry:'Infantry', mech:'Mechanized', armor:'Armor', artillery:'Artillery', special:'Special Forces' };
+const PASSWORDS  = { ua: '1eDp0Zs8', ru: 'It8En5a6' };
+const SAVE_KEY   = 'pokrovsk_v5';
+const AUTH_KEY   = 'pokrovsk_auth';
+const SCENARIO_T = new Date(2024, 9, 1, 6, 0, 0).getTime();
+const MN         = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+const UNIT_LABEL = { infantry:'Infantry', mech:'Mechanized', armor:'Armor', artillery:'Artillery', special:'Special Forces' };
 
 // ═══════════════════════════════════════════════════════════
-// COMMANDERS
+// COMMANDERS  (names stripped of general/officer names)
 // ═══════════════════════════════════════════════════════════
 const COMMANDERS_DEF = [
   // ── UKRAINE ──
-  { id:'ua_01', faction:'ua', name:'41st Sector — Col. Marchenko',    type:'mech',      pos:[48.42,37.48], soldiers:2900, maxSol:3500, morale:66, supply:55 },
-  { id:'ua_02', faction:'ua', name:'57th Infantry — Maj. Koval',      type:'infantry',  pos:[48.34,37.40], soldiers:2400, maxSol:3000, morale:62, supply:52 },
-  { id:'ua_03', faction:'ua', name:'110th Sector — Lt.Col. Bondar',   type:'mech',      pos:[48.22,37.32], soldiers:2100, maxSol:3500, morale:54, supply:45 },
-  { id:'ua_04', faction:'ua', name:'3rd Assault — Col. Shevchenko',   type:'special',   pos:[48.17,37.26], soldiers:3200, maxSol:3800, morale:74, supply:60 },
-  { id:'ua_05', faction:'ua', name:'47th Mech. — Maj. Petrenko',      type:'mech',      pos:[48.28,37.20], soldiers:2600, maxSol:3800, morale:65, supply:58 },
-  { id:'ua_06', faction:'ua', name:'1st Armored — Col. Lysenko',      type:'armor',     pos:[48.30,37.05], soldiers:1800, maxSol:2200, morale:72, supply:63 },
-  { id:'ua_07', faction:'ua', name:'23rd Sector — Lt.Col. Savchenko', type:'mech',      pos:[48.12,37.24], soldiers:2700, maxSol:3500, morale:61, supply:50 },
-  { id:'ua_08', faction:'ua', name:'141st Infantry — Maj. Tkachenko', type:'infantry',  pos:[48.06,37.20], soldiers:2200, maxSol:3000, morale:58, supply:48 },
-  { id:'ua_09', faction:'ua', name:'31st Mech. — Col. Kravchenko',    type:'mech',      pos:[47.96,37.20], soldiers:2800, maxSol:3500, morale:65, supply:55 },
-  { id:'ua_10', faction:'ua', name:'128th Mountain — Maj. Hryts',     type:'infantry',  pos:[47.82,37.10], soldiers:2400, maxSol:3800, morale:63, supply:52 },
-  { id:'ua_11', faction:'ua', name:'43rd Artillery — Col. Vasylenko', type:'artillery', pos:[48.24,37.00], soldiers:1700, maxSol:2000, morale:75, supply:68 },
-  { id:'ua_12', faction:'ua', name:'55th Artillery — Maj. Moroz',     type:'artillery', pos:[48.05,37.00], soldiers:1500, maxSol:1800, morale:70, supply:65 },
-  { id:'ua_13', faction:'ua', name:'14th Mech. — Col. Zinchenko',     type:'mech',      pos:[48.35,36.88], soldiers:3600, maxSol:3800, morale:78, supply:72 },
+  { id:'ua_01', faction:'ua', name:'41st Sector',    type:'mech',      pos:[48.42,37.48], soldiers:2900, maxSol:3500, morale:66, supply:55 },
+  { id:'ua_02', faction:'ua', name:'57th Infantry',  type:'infantry',  pos:[48.34,37.40], soldiers:2400, maxSol:3000, morale:62, supply:52 },
+  { id:'ua_03', faction:'ua', name:'110th Sector',   type:'mech',      pos:[48.22,37.32], soldiers:2100, maxSol:3500, morale:54, supply:45 },
+  { id:'ua_04', faction:'ua', name:'3rd Assault',    type:'special',   pos:[48.17,37.26], soldiers:3200, maxSol:3800, morale:74, supply:60 },
+  { id:'ua_05', faction:'ua', name:'47th Mech.',     type:'mech',      pos:[48.28,37.20], soldiers:2600, maxSol:3800, morale:65, supply:58 },
+  { id:'ua_06', faction:'ua', name:'1st Armored',    type:'armor',     pos:[48.30,37.05], soldiers:1800, maxSol:2200, morale:72, supply:63 },
+  { id:'ua_07', faction:'ua', name:'23rd Sector',    type:'mech',      pos:[48.12,37.24], soldiers:2700, maxSol:3500, morale:61, supply:50 },
+  { id:'ua_08', faction:'ua', name:'141st Infantry', type:'infantry',  pos:[48.06,37.20], soldiers:2200, maxSol:3000, morale:58, supply:48 },
+  { id:'ua_09', faction:'ua', name:'31st Mech.',     type:'mech',      pos:[47.96,37.20], soldiers:2800, maxSol:3500, morale:65, supply:55 },
+  { id:'ua_10', faction:'ua', name:'128th Mountain', type:'infantry',  pos:[47.82,37.10], soldiers:2400, maxSol:3800, morale:63, supply:52 },
+  { id:'ua_11', faction:'ua', name:'43rd Artillery', type:'artillery', pos:[48.24,37.00], soldiers:1700, maxSol:2000, morale:75, supply:68 },
+  { id:'ua_12', faction:'ua', name:'55th Artillery', type:'artillery', pos:[48.05,37.00], soldiers:1500, maxSol:1800, morale:70, supply:65 },
+  { id:'ua_13', faction:'ua', name:'14th Mech.',     type:'mech',      pos:[48.35,36.88], soldiers:3600, maxSol:3800, morale:78, supply:72 },
   // ── RUSSIA ──
-  { id:'ru_01', faction:'ru', name:'200th Brigade — Polk. Volkov',    type:'mech',      pos:[48.48,37.98], soldiers:4200, maxSol:5000, morale:68, supply:76 },
-  { id:'ru_02', faction:'ru', name:'39th Brigade — Polk. Sorokin',    type:'mech',      pos:[48.38,37.90], soldiers:3800, maxSol:4500, morale:65, supply:72 },
-  { id:'ru_03', faction:'ru', name:'5th Gds Tank — Polk. Gromov',     type:'armor',     pos:[48.25,37.60], soldiers:5500, maxSol:6000, morale:72, supply:78 },
-  { id:'ru_04', faction:'ru', name:'Storm-Z Det. — Polk. Nikitin',    type:'special',   pos:[48.18,37.52], soldiers:2400, maxSol:3000, morale:55, supply:65 },
-  { id:'ru_05', faction:'ru', name:'98th VDV — Polk. Pavlov',         type:'special',   pos:[48.12,37.58], soldiers:3500, maxSol:4000, morale:82, supply:74 },
-  { id:'ru_06', faction:'ru', name:'1st Gds Tank — Polk. Smirnov',    type:'armor',     pos:[48.30,37.72], soldiers:5800, maxSol:7000, morale:72, supply:76 },
-  { id:'ru_07', faction:'ru', name:'36th CAA — Polk. Egorov',         type:'mech',      pos:[47.92,37.42], soldiers:4800, maxSol:5500, morale:66, supply:70 },
-  { id:'ru_08', faction:'ru', name:'Akhmat SF — Polk. Dadaev',        type:'special',   pos:[47.85,37.35], soldiers:3200, maxSol:3500, morale:74, supply:68 },
-  { id:'ru_09', faction:'ru', name:'20th MLRS — Polk. Kozlov',        type:'artillery', pos:[48.40,38.12], soldiers:1800, maxSol:2000, morale:76, supply:80 },
-  { id:'ru_10', faction:'ru', name:'8th Army Arty — Polk. Orlov',     type:'artillery', pos:[48.10,37.82], soldiers:1600, maxSol:1800, morale:72, supply:78 },
+  { id:'ru_01', faction:'ru', name:'200th Brigade',  type:'mech',      pos:[48.48,37.98], soldiers:4200, maxSol:5000, morale:68, supply:76 },
+  { id:'ru_02', faction:'ru', name:'39th Brigade',   type:'mech',      pos:[48.38,37.90], soldiers:3800, maxSol:4500, morale:65, supply:72 },
+  { id:'ru_03', faction:'ru', name:'5th Gds Tank',   type:'armor',     pos:[48.25,37.60], soldiers:5500, maxSol:6000, morale:72, supply:78 },
+  { id:'ru_04', faction:'ru', name:'Storm-Z Det.',   type:'special',   pos:[48.18,37.52], soldiers:2400, maxSol:3000, morale:55, supply:65 },
+  { id:'ru_05', faction:'ru', name:'98th VDV',       type:'special',   pos:[48.12,37.58], soldiers:3500, maxSol:4000, morale:82, supply:74 },
+  { id:'ru_06', faction:'ru', name:'1st Gds Tank',   type:'armor',     pos:[48.30,37.72], soldiers:5800, maxSol:7000, morale:72, supply:76 },
+  { id:'ru_07', faction:'ru', name:'36th CAA',       type:'mech',      pos:[47.92,37.42], soldiers:4800, maxSol:5500, morale:66, supply:70 },
+  { id:'ru_08', faction:'ru', name:'Akhmat SF',      type:'special',   pos:[47.85,37.35], soldiers:3200, maxSol:3500, morale:74, supply:68 },
+  { id:'ru_09', faction:'ru', name:'20th MLRS',      type:'artillery', pos:[48.40,38.12], soldiers:1800, maxSol:2000, morale:76, supply:80 },
+  { id:'ru_10', faction:'ru', name:'8th Army Arty',  type:'artillery', pos:[48.10,37.82], soldiers:1600, maxSol:1800, morale:72, supply:78 },
 ];
 
 let COMMANDERS = JSON.parse(JSON.stringify(COMMANDERS_DEF));
@@ -417,17 +395,76 @@ function mkRng(str) {
   };
 }
 
-// Pre-compute relative soldier offsets (stable per commander ID)
+// ═══════════════════════════════════════════════════════════
+// FRONTLINE
+// ═══════════════════════════════════════════════════════════
+const FRONTLINE = [
+  [48.56,37.88],[48.50,37.80],[48.44,37.72],[48.38,37.62],[48.32,37.54],
+  [48.25,37.44],[48.20,37.38],[48.15,37.34],[48.08,37.32],[48.02,37.30],
+  [47.96,37.29],[47.90,37.27],[47.82,37.25],[47.75,37.22],[47.68,37.18],
+];
+
+// Nearest point on frontline polyline + tangent direction
+function nearestOnFrontline(pos) {
+  let bestPt = null, bestDist = Infinity, bestSeg = 0;
+  for (let i = 0; i < FRONTLINE.length - 1; i++) {
+    const A = FRONTLINE[i], B = FRONTLINE[i+1];
+    const dx = B[0]-A[0], dy = B[1]-A[1];
+    const len2 = dx*dx + dy*dy;
+    let t = len2 > 0 ? ((pos[0]-A[0])*dx + (pos[1]-A[1])*dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const pt = [A[0]+t*dx, A[1]+t*dy];
+    const d  = Math.hypot(pos[0]-pt[0], pos[1]-pt[1]);
+    if (d < bestDist) { bestDist = d; bestPt = pt; bestSeg = i; }
+  }
+  const A = FRONTLINE[bestSeg], B = FRONTLINE[bestSeg+1];
+  const tLen = Math.hypot(B[0]-A[0], B[1]-A[1]);
+  const tang = tLen > 0 ? [(B[0]-A[0])/tLen, (B[1]-A[1])/tLen] : [1,0];
+  return { pt: bestPt, tang };
+}
+
+// Depth ranges from frontline per unit type (degrees lat ≈ km/111)
+const DEPTH_RANGE = {
+  infantry:  [0.000, 0.018],
+  mech:      [0.000, 0.022],
+  armor:     [0.004, 0.026],
+  artillery: [0.045, 0.100],
+  special:   [0.000, 0.012],
+};
+const ALONG_SPREAD = {
+  infantry:  0.040,
+  mech:      0.030,
+  armor:     0.025,
+  artillery: 0.060,
+  special:   0.014,
+};
+
+// Compute stable soldier offsets (relative to c.pos) clustered near frontline
 function buildOffsets(c) {
-  const rng    = mkRng(c.id);
-  const spread = 0.006 * Math.sqrt(c.soldiers / 2800);
-  const lat0   = c.pos[0] * Math.PI / 180;
-  const offs   = new Float32Array(c.soldiers * 2);
+  const rng = mkRng(c.id);
+  const { pt: fp, tang } = nearestOnFrontline(c.pos);
+  c._frontPt = fp;
+
+  // Direction from frontline toward commander (normal)
+  const nRaw = [c.pos[0]-fp[0], c.pos[1]-fp[1]];
+  const nLen = Math.hypot(nRaw[0], nRaw[1]);
+  const norm = nLen > 1e-9 ? [nRaw[0]/nLen, nRaw[1]/nLen] : [0,1];
+
+  const along = ALONG_SPREAD[c.type] || 0.030;
+  const [dMin, dMax] = DEPTH_RANGE[c.type] || [0, 0.020];
+  const lat0  = fp[0] * Math.PI / 180;
+  const cosL  = Math.cos(lat0);
+  const offs  = new Float32Array(c.soldiers * 2);
+
+  // Base offset: frontline point minus commander position
+  const baseLat = fp[0] - c.pos[0];
+  const baseLng = fp[1] - c.pos[1];
+
   for (let i = 0; i < c.soldiers; i++) {
-    const a = rng() * Math.PI * 2;
-    const r = Math.sqrt(rng()) * spread;
-    offs[i*2]   = r * Math.cos(a);                              // Δlat
-    offs[i*2+1] = r * Math.sin(a) / Math.cos(lat0);            // Δlng
+    const a = (rng() - 0.5) * 2 * along;            // along frontline
+    const d = dMin + rng() * (dMax - dMin);          // depth toward commander
+    offs[i*2]   = baseLat + tang[0]*a + norm[0]*d;
+    offs[i*2+1] = baseLng + tang[1]*a/cosL + norm[1]*d/cosL;
   }
   c._offs = offs;
 }
@@ -523,12 +560,6 @@ function checkRemembered() {
 // ═══════════════════════════════════════════════════════════
 // MAP
 // ═══════════════════════════════════════════════════════════
-const FRONTLINE = [
-  [48.56,37.88],[48.50,37.80],[48.44,37.72],[48.38,37.62],[48.32,37.54],
-  [48.25,37.44],[48.20,37.38],[48.15,37.34],[48.08,37.32],[48.02,37.30],
-  [47.96,37.29],[47.90,37.27],[47.82,37.25],[47.75,37.22],[47.68,37.18],
-];
-
 const BOUNDS = L.latLngBounds([47.40, 36.50], [48.80, 38.40]);
 
 const map = L.map('map', {
@@ -556,7 +587,69 @@ L.polyline(FRONTLINE, { color:'#ff2020', weight:14, opacity:0.09 }).addTo(map);
 L.polyline(FRONTLINE, { color:'#ff2828', weight:2,  opacity:0.92 }).addTo(map);
 
 // ═══════════════════════════════════════════════════════════
-// SOLDIER DOTS — CANVAS LAYER
+// NATO SVG ICON BUILDER
+// ═══════════════════════════════════════════════════════════
+function natoSym(type, cx, cy, hw, hh) {
+  const b = `fill="none" stroke="white" stroke-linecap="round"`;
+  switch(type) {
+    case 'infantry':
+      return `<line x1="${cx-hw}" y1="${cy-hh}" x2="${cx+hw}" y2="${cy+hh}" ${b} stroke-width="2"/>
+              <line x1="${cx+hw}" y1="${cy-hh}" x2="${cx-hw}" y2="${cy+hh}" ${b} stroke-width="2"/>`;
+    case 'armor':
+      return `<ellipse cx="${cx}" cy="${cy}" rx="${hw}" ry="${hh*.65}" ${b} stroke-width="1.9"/>`;
+    case 'mech':
+      return `<ellipse cx="${cx}" cy="${cy}" rx="${hw}" ry="${hh*.65}" ${b} stroke-width="1.8"/>
+              <line x1="${cx-hw}" y1="${cy-hh*.65}" x2="${cx+hw}" y2="${cy+hh*.65}" ${b} stroke-width="1.3"/>
+              <line x1="${cx+hw}" y1="${cy-hh*.65}" x2="${cx-hw}" y2="${cy+hh*.65}" ${b} stroke-width="1.3"/>`;
+    case 'artillery':
+      return `<circle cx="${cx}" cy="${cy}" r="${Math.min(hw,hh)*.88}" ${b} stroke-width="1.9"/>
+              <circle cx="${cx}" cy="${cy}" r="2" fill="white"/>`;
+    case 'special':
+      return `<line x1="${cx}" y1="${cy-hh}" x2="${cx}" y2="${cy+hh}" ${b} stroke-width="2.2"/>
+              <line x1="${cx-hw}" y1="${cy}" x2="${cx+hw}" y2="${cy}" ${b} stroke-width="2.2"/>`;
+    default: return '';
+  }
+}
+
+function makeNATOIcon(c, sel) {
+  const draggable = c.faction === playerFaction;
+  const dragClass = draggable ? ' nato-drag' : '';
+
+  if (c.faction === 'ua') {
+    // Friendly: blue rectangle (NATO APP-6C)
+    const W = 48, H = 30, cx = 24, cy = 15;
+    const ring = sel
+      ? `<rect x="0.5" y="0.5" width="${W-1}" height="${H-1}" fill="none" stroke="white" stroke-width="2" opacity="0.9" rx="1"/>`
+      : '';
+    return L.divIcon({
+      className: dragClass,
+      html: `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+        <rect x="2" y="2" width="${W-4}" height="${H-4}" fill="#0050A0" stroke="#000" stroke-width="1.5" rx="1"/>
+        ${natoSym(c.type, cx, cy, 11, 9)}
+        ${ring}
+      </svg>`,
+      iconSize: [W, H], iconAnchor: [W/2, H/2],
+    });
+  } else {
+    // Hostile: red diamond (NATO APP-6C)
+    const W = 44, H = 44, cx = 22, cy = 22;
+    const ring = sel
+      ? `<polygon points="${cx},0.5 ${W-0.5},${cy} ${cx},${H-0.5} 0.5,${cy}" fill="none" stroke="white" stroke-width="2" opacity="0.9"/>`
+      : '';
+    return L.divIcon({
+      className: dragClass,
+      html: `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+        <polygon points="${cx},2 ${W-2},${cy} ${cx},${H-2} 2,${cy}" fill="#CC1111" stroke="#000" stroke-width="1.5"/>
+        ${natoSym(c.type, cx, cy, 9, 8)}
+        ${ring}
+      </svg>`,
+      iconSize: [W, H], iconAnchor: [W/2, H/2],
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SOLDIER DOTS — CANVAS LAYER (with drag-to-move)
 // ═══════════════════════════════════════════════════════════
 let draggingNow = false;
 
@@ -564,10 +657,11 @@ const SoldierLayer = L.Layer.extend({
   onAdd(m) {
     this._map = m;
     this._canvas = document.createElement('canvas');
-    this._canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;';
+    this._canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:auto;';
     m.getPanes().overlayPane.appendChild(this._canvas);
     m.on('viewreset moveend zoomend resize', this._full, this);
     m.on('move', this._fast, this);
+    this._canvas.addEventListener('mousedown', e => this._onDown(e));
     this._full();
   },
   onRemove(m) {
@@ -577,7 +671,7 @@ const SoldierLayer = L.Layer.extend({
   },
   redraw(fast) { fast ? this._fast() : this._full(); },
   _full() { this._draw(false); },
-  _fast() { this._draw(true);  },
+  _fast() { this._draw(true); },
   _draw(fast) {
     if (!this._map) return;
     const topLeft = this._map.containerPointToLayerPoint([0, 0]);
@@ -585,23 +679,18 @@ const SoldierLayer = L.Layer.extend({
     const size = this._map.getSize();
     this._canvas.width  = size.x;
     this._canvas.height = size.y;
-    const ctx = this._canvas.getContext('2d');
+    const ctx  = this._canvas.getContext('2d');
     ctx.clearRect(0, 0, size.x, size.y);
-
-    const zoom   = this._map.getZoom();
-    // Sampling: show every Nth soldier based on zoom
-    const samp   = fast || draggingNow
+    const zoom = this._map.getZoom();
+    const samp = fast || draggingNow
       ? (zoom >= 11 ? 8 : 25)
       : (zoom >= 14 ? 1 : zoom >= 13 ? 2 : zoom >= 12 ? 4 : zoom >= 11 ? 8 : zoom >= 10 ? 16 : 32);
-    const dotR   = zoom >= 13 ? 2.5 : zoom >= 11 ? 2 : 1.5;
-
-    // Batch by faction for single fillStyle call
+    const dotR = zoom >= 13 ? 2.5 : zoom >= 11 ? 2 : 1.5;
     ['ua','ru'].forEach(fac => {
-      ctx.fillStyle = fac === 'ua' ? 'rgba(60,120,255,0.75)' : 'rgba(255,60,60,0.75)';
+      ctx.fillStyle = fac === 'ua' ? 'rgba(60,120,255,0.78)' : 'rgba(255,60,60,0.78)';
       ctx.beginPath();
       COMMANDERS.filter(c => c.faction === fac).forEach(c => {
-        const offs = c._offs;
-        const n    = c.soldiers;
+        const offs = c._offs, n = c.soldiers;
         for (let i = 0; i < n; i += samp) {
           const lat = c.pos[0] + offs[i*2];
           const lng = c.pos[1] + offs[i*2+1];
@@ -615,7 +704,76 @@ const SoldierLayer = L.Layer.extend({
       });
       ctx.fill();
     });
-  }
+  },
+
+  // ── Canvas drag: click on soldier cloud → drag unit ──────
+  _onDown(e) {
+    if (e.button !== 0) return;
+    const rect    = this._canvas.getBoundingClientRect();
+    const px      = e.clientX - rect.left;
+    const py      = e.clientY - rect.top;
+    const clickLL = this._map.containerPointToLatLng([px, py]);
+
+    // Find nearest own-faction commander whose frontline cluster is within hit radius
+    let bestC = null, bestDist = Infinity;
+    const HIT = 0.035; // ~3.5km in degrees
+
+    COMMANDERS.filter(c => c.faction === playerFaction).forEach(c => {
+      const fp = c._frontPt || c.pos;
+      const d  = Math.hypot(clickLL.lat - fp[0], clickLL.lng - fp[1]);
+      // Also allow clicking near the commander marker itself
+      const dm = Math.hypot(clickLL.lat - c.pos[0], clickLL.lng - c.pos[1]);
+      const eff = Math.min(d, dm);
+      if (eff < HIT && eff < bestDist) { bestDist = eff; bestC = c; }
+    });
+
+    if (!bestC) return; // no match — let map pan
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    this._dragCmd   = bestC;
+    this._dragStart = { lat: clickLL.lat, lng: clickLL.lng };
+    this._posStart  = [...bestC.pos];
+    draggingNow     = true;
+    this._map.dragging.disable();
+    selectCmd(bestC.id);
+
+    this._onMoveH = ev => this._onMove(ev);
+    this._onUpH   = ev => this._onUp(ev);
+    document.addEventListener('mousemove', this._onMoveH);
+    document.addEventListener('mouseup',   this._onUpH);
+  },
+
+  _onMove(e) {
+    if (!this._dragCmd) return;
+    const rect = this._canvas.getBoundingClientRect();
+    const px   = e.clientX - rect.left;
+    const py   = e.clientY - rect.top;
+    const ll   = this._map.containerPointToLatLng([px, py]);
+    this._dragCmd.pos = [
+      this._posStart[0] + (ll.lat - this._dragStart.lat),
+      this._posStart[1] + (ll.lng - this._dragStart.lng),
+    ];
+    this._draw(true);
+    refreshMarker(this._dragCmd.id);
+    if (selectedId === this._dragCmd.id && activeTab === 'unit') renderUnitPanel();
+  },
+
+  _onUp(e) {
+    if (!this._dragCmd) return;
+    document.removeEventListener('mousemove', this._onMoveH);
+    document.removeEventListener('mouseup',   this._onUpH);
+    draggingNow = false;
+    this._map.dragging.enable();
+    buildOffsets(this._dragCmd); // recompute soldiers for new frontline point
+    this._draw(false);
+    refreshMarker(this._dragCmd.id);
+    renderForcesList();
+    if (selectedId === this._dragCmd.id && activeTab === 'unit') renderUnitPanel();
+    saveState();
+    this._dragCmd = null;
+  },
 });
 
 const soldierLayer = new SoldierLayer();
@@ -624,21 +782,11 @@ soldierLayer.addTo(map);
 // ═══════════════════════════════════════════════════════════
 // COMMANDER MARKERS
 // ═══════════════════════════════════════════════════════════
-function makeIcon(c, sel) {
-  const s  = sel ? ' sel' : '';
-  const dr = c.faction === playerFaction ? ' um-drag' : '';
-  return L.divIcon({
-    className: '',
-    html: `<div class="um ${c.faction}${s}${dr}">${UNIT_SYM[c.type]||'?'}</div>`,
-    iconSize: [32,32], iconAnchor: [16,16],
-  });
-}
-
 function spawnMarkers() {
   COMMANDERS.forEach(c => {
     const draggable = c.faction === playerFaction;
     const m = L.marker(c.pos, {
-      icon: makeIcon(c, false),
+      icon: makeNATOIcon(c, false),
       draggable,
       zIndexOffset: c.faction === 'ua' ? 100 : 50,
     }).addTo(map);
@@ -659,6 +807,7 @@ function spawnMarkers() {
     m.on('dragend', e => {
       draggingNow = false;
       c.pos = [e.target.getLatLng().lat, e.target.getLatLng().lng];
+      buildOffsets(c); // recompute soldiers for new frontline point
       soldierLayer.redraw(false);
       refreshMarker(c.id);
       renderForcesList();
@@ -674,7 +823,7 @@ function refreshMarker(id) {
   const c = COMMANDERS.find(x => x.id === id);
   if (!c || !markers[id]) return;
   markers[id].setLatLng(c.pos);
-  markers[id].setIcon(makeIcon(c, selectedId === id));
+  markers[id].setIcon(makeNATOIcon(c, selectedId === id));
 }
 
 function updateMarkerDraggability() {
@@ -683,7 +832,7 @@ function updateMarkerDraggability() {
     if (!m) return;
     if (c.faction === playerFaction) m.dragging?.enable();
     else m.dragging?.disable();
-    m.setIcon(makeIcon(c, selectedId === c.id));
+    m.setIcon(makeNATOIcon(c, selectedId === c.id));
   });
 }
 
@@ -727,7 +876,7 @@ function switchTab(tab) {
 function renderUnitPanel() {
   const el = document.getElementById('unit-panel');
   if (!selectedId) {
-    el.innerHTML = '<div class="no-sel">No commander selected.<br>Click a unit marker on the map.</div>';
+    el.innerHTML = '<div class="no-sel">No unit selected.<br>Click a unit marker on the map.</div>';
     return;
   }
   const c   = COMMANDERS.find(x => x.id === selectedId);
@@ -744,7 +893,7 @@ function renderUnitPanel() {
         <span class="ctag ${c.faction === 'ua' ? 'ct-ua' : 'ct-ru'}">${c.faction === 'ua' ? '🇺🇦 UAF' : '🇷🇺 ZVO'}</span>
         <span class="ctag ct-typ">${UNIT_LABEL[c.type] || c.type}</span>
       </div>
-      ${own ? '<div class="cmd-drag-hint">Drag this unit\'s marker on the map to reposition.</div>' : ''}
+      ${own ? '<div class="cmd-drag-hint">Drag this unit\'s marker (or its soldier cloud) to reposition.</div>' : ''}
     </div>
     <div class="stats">
       <div class="st-row">
@@ -761,7 +910,7 @@ function renderUnitPanel() {
       </div>
     </div>
     <div class="cmd-pos">📍 ${c.pos[0].toFixed(5)}°N  ${c.pos[1].toFixed(5)}°E</div>
-    ${!own ? '<div style="font-size:11px;color:#1e3040;margin-top:10px;font-style:italic">Enemy commander — observation only.</div>' : ''}
+    ${!own ? '<div style="font-size:11px;color:#1e3040;margin-top:10px;font-style:italic">Enemy unit — observation only.</div>' : ''}
   `;
 }
 
@@ -776,11 +925,15 @@ function renderForcesList() {
     const n     = COMMANDERS.filter(c => c.faction === fac).length;
     html += `<div class="fh ${fac}">${label}<span class="fh-n">${n} units</span></div>`;
     COMMANDERS.filter(c => c.faction === fac).forEach(c => {
-      const hp    = (c.soldiers / c.maxSol * 100).toFixed(0);
-      const hpC   = hp > 60 ? '#2a6a2a' : hp > 30 ? '#6a6a10' : '#6a2020';
-      const sel   = selectedId === c.id ? ` sel${fac==='ru'?' ru':''}` : '';
+      const hp  = (c.soldiers / c.maxSol * 100).toFixed(0);
+      const hpC = hp > 60 ? '#2a6a2a' : hp > 30 ? '#6a6a10' : '#6a2020';
+      const sel = selectedId === c.id ? ` sel${fac==='ru'?' ru':''}` : '';
+      // Mini NATO symbol for list
+      const miniSvg = fac === 'ua'
+        ? `<svg width="22" height="14" viewBox="0 0 22 14"><rect x="1" y="1" width="20" height="12" fill="#0050A0" stroke="#000" stroke-width="1" rx="1"/>${natoSym(c.type,11,7,5,4)}</svg>`
+        : `<svg width="20" height="20" viewBox="0 0 20 20"><polygon points="10,1 19,10 10,19 1,10" fill="#CC1111" stroke="#000" stroke-width="1"/>${natoSym(c.type,10,10,4,3.5)}</svg>`;
       html += `<div class="cmd-row${sel}" onclick="selectCmd('${c.id}')">
-        <div class="cmd-sym cs-${fac}">${UNIT_SYM[c.type]||'?'}</div>
+        <div class="cmd-sym cs-${fac}" style="background:none;border:none;padding:0;width:26px">${miniSvg}</div>
         <div class="cmd-inf">
           <div class="cmd-rn" title="${c.name}">${c.name}</div>
           <div class="cmd-rm">
@@ -886,14 +1039,13 @@ function notify(msg, type='info') {
 // INIT
 // ═══════════════════════════════════════════════════════════
 const stateLoaded = loadState();
-COMMANDERS.forEach(buildOffsets); // rebuild offsets after position restore
+COMMANDERS.forEach(buildOffsets); // rebuild with (possibly restored) positions
 spawnMarkers();
 renderClock();
 lastRealTime = Date.now();
 
-// Check remember-me — if valid, skip login
 if (!checkRemembered()) {
-  // Login screen stays visible
+  // login screen stays visible
 }
 
 if (stateLoaded) {
