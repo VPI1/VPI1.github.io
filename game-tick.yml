@@ -1,0 +1,37 @@
+name: Game Tick
+
+on:
+  schedule:
+    # Runs every 5 minutes — GitHub's minimum cron interval
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # also allows manual triggering from the Actions tab
+
+permissions:
+  contents: write   # needed to commit game-state.json back to the repo
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run game tick
+        run: node game-tick.js
+
+      - name: Commit updated state if changed
+        run: |
+          git config user.name  "Game Tick Bot"
+          git config user.email "noreply@tactical-map"
+          git add game-state.json
+          git diff --staged --quiet \
+            && echo "No state change — nothing to commit" \
+            || git commit -m "Game tick $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Push
+        run: git push
