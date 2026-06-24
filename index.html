@@ -295,6 +295,7 @@ function loadFirebaseSDK(cb) {
   <button class="dep-role-btn" onclick="selectDepRole('artillery')">Artillery</button>
   <button class="dep-role-btn" onclick="selectDepRole('mortar')">Mortar</button>
 </div>
+<div id="version-badge" style="position:fixed;bottom:14px;left:14px;z-index:9000;font-family:monospace;font-size:10px;color:#555;pointer-events:none"></div>
 <div id="toolbar">
   <button class="tb-btn" id="dep-btn" onclick="enterPlaceDeployPoint()" title="Place deployment point">⚑</button>
   <button class="tb-btn" id="ruler-btn" title="Measure distances">⊾</button>
@@ -3968,7 +3969,12 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-console.log('TACTICAL MAP CODE VERSION: 2026-06-24-C');
+const VERSION = '2026-06-24-D';
+console.log('Tactical Map v' + VERSION);
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('version-badge');
+  if (el) el.textContent = 'v' + VERSION;
+});
 const SAVE_KEY    = 'tactical_map_v2';
 const GH_KEY      = 'tactical_map_github';   // localStorage key for GitHub config
 const GH_FILE     = 'game-state.json';        // file in the repo
