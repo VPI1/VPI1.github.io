@@ -1817,14 +1817,16 @@ function _buildActTab(m, now, moving) {
   }
 
   // Merge button — shown when a nearby same-side/same-role unit exists
-  const mergeTarget = allMarkers.find(other =>
-    other !== m && other._side === m._side && other._role === m._role &&
-    !movingMarkers.has(other) && segMeters(markerPos(m), markerPos(other)) <= MERGE_DIST_M
-  );
+  let mergeTarget = null, mergeDist = 0;
+  for (const other of allMarkers) {
+    if (other === m || other._side !== m._side || other._role !== m._role || movingMarkers.has(other)) continue;
+    const d = Math.round(segMeters(markerPos(m), markerPos(other)));
+    if (d <= MERGE_DIST_M) { mergeTarget = other; mergeDist = d; break; }
+  }
   if (mergeTarget) {
     const total = m._count + mergeTarget._count;
     h += `<div style="margin-top:8px;border-top:1px solid rgba(255,165,0,0.3);padding-top:8px">`;
-    h += _pb(`Merge with nearby unit (→ ${total} ${m._role})`, '⊕', 'tac', "_pa('merge')");
+    h += _pb(`Merge with nearby unit (→ ${total} · ${mergeDist}m away)`, '⊕', 'tac', "_pa('merge')");
     h += `</div>`;
   }
 
@@ -2425,9 +2427,11 @@ function openDeployPanel(dp) {
     if (ms > 0) {
       const s = Math.ceil(ms / 1000);
       const str = s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
+      el.style.color = '#66bb6a';
       el.textContent = `Next reinforcement in: ${str}`;
     } else {
-      el.textContent = '';
+      el.style.color = '#666';
+      el.textContent = 'No reinforcement scheduled';
     }
   }
   updateReinfEta();
@@ -3987,7 +3991,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-F';
+const VERSION = '2026-06-24-G';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
