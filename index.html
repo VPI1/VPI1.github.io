@@ -3831,29 +3831,23 @@ function initFirebase() {
 
 function startFBListeners() {
   if (!_fbDb) return;
+  const otherSide = userSide === 'blue' ? 'red' : 'blue';
 
-  // ── connection health monitor ──
-  _fbDb.ref('.info/connected').on('value', snap => {
-    showToast(snap.val() ? 'Firebase: ONLINE' : 'Firebase: OFFLINE', snap.val() ? '#66bb6a' : '#ef5350');
-  });
-
-  // ── units: single value listener covers add/change/remove reliably ──
-  _fbDb.ref('units').on('value', snap => {
-    const all = snap.val();
-    const remoteKeys = all ? Object.keys(all).filter(uid => all[uid]?.clientId !== _fbClientId) : [];
-    if (remoteKeys.length) showToast('FB update: ' + remoteKeys.length + ' remote unit(s)', '#42a5f5');
-    if (!all) return;
-    for (const uid of Object.keys(all)) {
-      const d = all[uid];
-      if (!d || d.clientId === _fbClientId) continue;
-      if (d.removed) {
-        const m = allMarkers.find(mk => mk._uid === uid);
-        if (m) { _fbApplying = true; try { map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); } finally { _fbApplying = false; } }
-      } else {
-        applyRemoteUnit(d);
+  // ── listen ONLY to the other side's namespace ──
+  _fbDb.ref(`units_${otherSide}`).on('value', snap => {
+    const all = snap.val() || {};
+    _fbApplying = true;
+    try {
+      // Remove other-side markers that are no longer in Firebase
+      for (const m of allMarkers.filter(mk => mk._side === otherSide)) {
+        if (!all[m._uid]) { map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); }
       }
-    }
-  }, err => showToast('FB listener error: ' + err.message, '#ef5350'));
+      // Apply/update all entries from the other side
+      for (const d of Object.values(all)) {
+        if (d) applyRemoteUnit(d);
+      }
+    } finally { _fbApplying = false; }
+  });
 
   // ── annotations ──
   _fbDb.ref(`annotations_${userSide}`).on('value', snap => {
@@ -3879,35 +3873,22 @@ function fbSyncUnit(m) {
   const route = state
     ? [[pos.lat, pos.lng], ...state.route.slice(state.seg + 1)]
     : null;
-  _fbDb.ref(`units/${m._uid}`).set({
-    uid:           m._uid,
-    clientId:      _fbClientId,
-    lat:           pos.lat,
-    lng:           pos.lng,
-    side:          m._side,
-    role:          m._role,
-    count:         m._count,
-    remainingRoute: route,
-    updatedAt:     Date.now(),
-  }).catch(e => showToast('FB write error: ' + e.message, '#ef5350'));
+  _fbDb.ref(`units_${userSide}/${m._uid}`).set({
+    uid: m._uid, lat: pos.lat, lng: pos.lng,
+    side: m._side, role: m._role, count: m._count,
+    remainingRoute: route, updatedAt: Date.now(),
+  }).catch(e => console.warn('FB write error:', e));
 }
 
 function fbRemoveUnit(m) {
   if (!_fbDb || _fbApplying || !m._uid) return;
-  _fbDb.ref(`units/${m._uid}`).set({ uid: m._uid, clientId: _fbClientId, removed: true });
+  _fbDb.ref(`units_${userSide}/${m._uid}`).remove();
 }
 
 function fbPushAllUnits() {
   if (!_fbDb) return;
-  // Read Firebase first: apply any state from other clients, then push only our own side
-  _fbDb.ref('units').once('value', snap => {
-    const all = snap.val() || {};
-    // Apply remote units (other clients' data wins over our stale localStorage)
-    for (const uid of Object.keys(all)) {
-      const d = all[uid];
-      if (d && !d.removed && d.clientId !== _fbClientId) applyRemoteUnit(d);
-    }
-    // Push only our own side's units (never overwrite the other side's data)
+  // Clear our own side's stale Firebase data, then push fresh current state
+  _fbDb.ref(`units_${userSide}`).remove().then(() => {
     for (const m of allMarkers) {
       if (m._side === userSide) fbSyncUnit(m);
     }
