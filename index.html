@@ -3500,7 +3500,6 @@ setInterval(() => {
   }
   // keep range circle centred on selected unit as it moves
   updatePanelRange();
-  updateMergeBadges();
 
   // ── per-marker timers + fog of war ──
   const now = Date.now();
@@ -3815,7 +3814,7 @@ function createMarker(pt, side, count, role = '') {
   }
   if (side === userSide) {
     m.dragging.enable();
-    m.on('dragend', () => { saveState(); fbSyncUnit(m); updateMergeBadges(); });
+    m.on('dragend', () => { saveState(); fbSyncUnit(m); });
     m.on('click', (e) => { e.originalEvent?.stopPropagation(); _markerClickAt = Date.now(); selectForRoute(m); });
   }
   return m;
@@ -3989,7 +3988,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-H';
+const VERSION = '2026-06-24-I';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4076,36 +4075,7 @@ function openGHConfig() {
 
 const MERGE_DIST_M = 50; // meters — units must be within this distance to merge
 
-// Show/hide floating merge badges on unit icons when pairs are within MERGE_DIST_M
-function updateMergeBadges() {
-  // Clear all existing badges
-  document.querySelectorAll('.merge-badge').forEach(el => el.remove());
-  // Find all mergeable pairs for own side
-  const checked = new Set();
-  for (const m of allMarkers) {
-    if (m._side !== userSide || checked.has(m)) continue;
-    const pos = markerPos(m);
-    const partner = allMarkers.find(other =>
-      other !== m && other._side === m._side && other._role === m._role &&
-      !movingMarkers.has(m) && !movingMarkers.has(other) &&
-      segMeters(pos, markerPos(other)) <= MERGE_DIST_M
-    );
-    if (!partner) continue;
-    checked.add(m); checked.add(partner);
-    // Add badge to both markers
-    [m, partner].forEach(unit => {
-      const el = unit.getElement();
-      if (!el) return;
-      const badge = document.createElement('div');
-      badge.className = 'merge-badge';
-      badge.textContent = '⊕ Merge';
-      badge.style.cssText = 'position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);background:#ffa726;color:#000;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;cursor:pointer;white-space:nowrap;z-index:600;font-family:monospace';
-      badge.onclick = (e) => { e.stopPropagation(); mergeUnits(m, partner); };
-      el.style.position = 'relative';
-      el.appendChild(badge);
-    });
-  }
-}
+function updateMergeBadges() {} // no-op — merge is handled via the unit panel button
 
 function mergeUnits(a, b) {
   const newCount = a._count + b._count;
