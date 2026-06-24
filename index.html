@@ -4072,7 +4072,7 @@ function openGHConfig() {
   document.body.appendChild(panel);
 }
 
-const MERGE_DIST_M = 200; // meters — drag within this to trigger merge prompt
+const MERGE_DIST_M = 50; // meters — units must be within this distance to merge
 
 function checkMergeProposal(m) {
   if (m._side !== userSide) return;
