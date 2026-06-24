@@ -287,21 +287,13 @@ function loadFirebaseSDK(cb) {
 <div id="unit-panel"></div>
 <div id="toast-area"></div>
 <div id="weather-widget">Loading weather…</div>
-<div id="dep-picker">
-  <div style="width:100%;color:#556;font-size:10px;padding-bottom:4px;letter-spacing:.4px">DEPLOY POINT FOR:</div>
-  <button class="dep-role-btn" onclick="selectDepRole('infantry')">Infantry</button>
-  <button class="dep-role-btn" onclick="selectDepRole('fpv')">FPV</button>
-  <button class="dep-role-btn" onclick="selectDepRole('mavic')">Mavic</button>
-  <button class="dep-role-btn" onclick="selectDepRole('artillery')">Artillery</button>
-  <button class="dep-role-btn" onclick="selectDepRole('mortar')">Mortar</button>
-</div>
+<div id="dep-picker"></div>
 <div id="version-badge" style="position:fixed;bottom:14px;left:14px;z-index:9000;font-family:monospace;font-size:10px;color:#555;pointer-events:none"></div>
 <div id="toolbar">
   <button class="tb-btn" id="dep-btn" onclick="enterPlaceDeployPoint()" title="Place deployment point">⚑</button>
   <button class="tb-btn" id="ruler-btn" title="Measure distances">⊾</button>
   <button class="tb-btn" id="annotate-btn" title="Draw annotations">✎</button>
   <button class="tb-btn" id="elev-btn" onclick="toggleElevationMap()" title="Toggle elevation map">⛰</button>
-  <button class="tb-btn" id="map3d-btn" onclick="toggle3DMap()" title="Toggle 3D map view">3D</button>
   <button class="tb-btn" onclick="resetMap()" title="Reset map">↺</button>
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
   <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
@@ -2482,12 +2474,27 @@ function removeDeployPoint(idx) {
 function enterPlaceDeployPoint() {
   const picker = document.getElementById('dep-picker');
   const showing = picker.style.display === 'flex';
-  picker.style.display = showing ? 'none' : 'flex';
   if (showing) {
+    picker.style.display = 'none';
     _placingDeployPoint = false;
     document.getElementById('dep-btn').classList.remove('ruler-on');
     setStatus('');
+    return;
   }
+  // Rebuild buttons with live counts
+  const roles = ['infantry','fpv','mavic','artillery','mortar'];
+  picker.innerHTML = '<div style="width:100%;color:#556;font-size:10px;padding-bottom:4px;letter-spacing:.4px">DEPLOY POINT FOR:</div>';
+  for (const role of roles) {
+    const cur = deploymentPoints.filter(d => d.side === userSide && d.role === role).length;
+    const full = cur >= DEP_MAX_PER_TYPE;
+    const btn = document.createElement('button');
+    btn.className = 'dep-role-btn';
+    btn.textContent = `${role[0].toUpperCase()+role.slice(1)} (${cur}/${DEP_MAX_PER_TYPE})`;
+    btn.style.opacity = full ? '0.45' : '1';
+    btn.onclick = () => selectDepRole(role);
+    picker.appendChild(btn);
+  }
+  picker.style.display = 'flex';
 }
 
 function selectDepRole(role) {
@@ -3272,6 +3279,8 @@ function assignRoute(marker, route) {
     marker.setIcon(soldierIcon(marker._side, marker._count, marker._role));
     const pos = marker.getLatLng();
     movingMarker = createMarker([pos.lat, pos.lng], marker._side, count, marker._role);
+    movingMarker._splitAt = Date.now(); // suppress auto-merge for 30s after split
+    marker._splitAt = Date.now();
   }
   clearRoute(movingMarker);
   const line = L.polyline(route, { color: '#ff9500', weight: 3, dashArray: '10 6', opacity: 0.95 }).addTo(map);
@@ -3499,8 +3508,10 @@ setInterval(() => {
   const merged5m = new Set();
   for (const a of allMarkers) {
     if (merged5m.has(a) || a._side !== userSide || movingMarkers.has(a)) continue;
+    if (a._splitAt && now - a._splitAt < 30000) continue; // cooldown after split
     for (const b of allMarkers) {
       if (b === a || merged5m.has(b) || b._side !== a._side || b._role !== a._role || movingMarkers.has(b)) continue;
+      if (b._splitAt && now - b._splitAt < 30000) continue;
       if (segMeters(markerPos(a), markerPos(b)) <= 5) {
         merged5m.add(a); merged5m.add(b);
         mergeUnits(a, b);
@@ -3782,16 +3793,6 @@ async function getElevationModifier(atkPos, tgtPos) {
 }
 
 // ── 3D map toggle ─────────────────────────────────────────────
-let _map3dOn = false;
-function toggle3DMap() {
-  _map3dOn = !_map3dOn;
-  const wrap = document.getElementById('map-wrap');
-  const btn  = document.getElementById('map3d-btn');
-  wrap.classList.toggle('map-3d', _map3dOn);
-  btn.classList.toggle('ruler-on', _map3dOn);
-  btn.textContent = _map3dOn ? '2D' : '3D';
-  setTimeout(() => map.invalidateSize(), 420); // after transition
-}
 
 function createMarker(pt, side, count, role = '') {
   const m = L.marker(pt, { icon: soldierIcon(side, count, role), draggable: false });
@@ -4003,7 +4004,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-K';
+const VERSION = '2026-06-24-L';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4150,25 +4151,39 @@ function mergeUnits(a, b) {
 }
 
 function resetMap() {
-  if (!confirm('Reset map? All units, routes and drawings will be cleared for both sides.')) return;
-  // Clear localStorage immediately
+  if (!confirm('Reset map? All units, routes, TDPs and drawings will be wiped for both sides.')) return;
+
+  // 1. Remove all units from map
+  for (const m of [...allMarkers]) { clearRoute(m); map.removeLayer(m); }
+  allMarkers.length = 0;
+  movingMarkers.clear();
+
+  // 2. Remove all deployment points
+  for (const dp of [...deploymentPoints]) {
+    if (dp.routeLine) map.removeLayer(dp.routeLine);
+    map.removeLayer(dp.marker);
+  }
+  deploymentPoints.length = 0;
+
+  // 3. Clear annotations
+  for (const a of annotationLayers) { map.removeLayer(a.layer); if (a.head) map.removeLayer(a.head); }
+  annotationLayers.length = 0;
+
+  // 4. Clear localStorage
   localStorage.removeItem(SAVE_KEY);
   localStorage.removeItem('annotations_blue');
   localStorage.removeItem('annotations_red');
-  // Clear service worker state
-  if (navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage({ type: 'SAVE_STATE', state: { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] } });
-  // Clear Firebase for BOTH sides (full reset), then reload
+
+  // 5. Clear Service Worker state
+  if (navigator.serviceWorker?.controller)
+    navigator.serviceWorker.controller.postMessage({ type: 'SAVE_STATE', state: { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] } });
+
+  // 6. Clear Firebase + GitHub, then reload
   const empty = { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] };
-  const doReload = () => {
-    // Also clear GitHub game-state.json if configured
-    saveToGitHub && saveToGitHub(empty);
-    location.reload();
-  };
+  const doReload = () => { saveToGitHub(empty); setTimeout(() => location.reload(), 300); };
   if (_fbDb) {
-    Promise.all([
-      _fbDb.ref('units_blue').remove(),
-      _fbDb.ref('units_red').remove(),
-    ]).then(doReload).catch(doReload);
+    Promise.all([_fbDb.ref('units_blue').remove(), _fbDb.ref('units_red').remove()])
+      .then(doReload).catch(doReload);
   } else {
     doReload();
   }
@@ -4355,6 +4370,7 @@ function loadSavedState() {
     // Restore deployment points
     if (depPoints?.length) {
       for (const dp of depPoints) {
+        if (dp.role === 'all') continue; // strip legacy "all" type TDPs
         const created = createDeploymentPoint({ lat: dp.lat, lng: dp.lng }, dp.side, dp.role ?? 'infantry');
         if (dp.moveRoute?.length) {
           created.moveRoute = dp.moveRoute;
