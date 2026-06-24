@@ -287,13 +287,14 @@ function loadFirebaseSDK(cb) {
 <div id="unit-panel"></div>
 <div id="toast-area"></div>
 <div id="weather-widget">Loading weather…</div>
+<div id="clock-widget" style="position:fixed;top:38px;right:10px;z-index:9000;background:rgba(8,10,18,0.88);color:#ccc;padding:4px 12px;border-radius:20px;font-size:11px;border:1px solid rgba(255,255,255,0.12);font-family:monospace;white-space:nowrap;user-select:none;letter-spacing:0.3px;"></div>
 <div id="dep-picker"></div>
 <div id="version-badge" style="position:fixed;bottom:14px;left:14px;z-index:9000;font-family:monospace;font-size:10px;color:#555;pointer-events:none"></div>
 <div id="toolbar">
   <button class="tb-btn" id="dep-btn" onclick="enterPlaceDeployPoint()" title="Place deployment point">⚑</button>
   <button class="tb-btn" id="ruler-btn" title="Measure distances">⊾</button>
   <button class="tb-btn" id="annotate-btn" title="Draw annotations">✎</button>
-  <button class="tb-btn" id="elev-btn" onclick="toggleElevationMap()" title="Toggle elevation map">⛰</button>
+  <button class="tb-btn" id="elev-btn" onclick="cycleMapMode()" title="Switch map layer (Hybrid / Satellite / Elevation)">🗺 HYB</button>
   <button class="tb-btn" onclick="resetMap()" title="Reset map">↺</button>
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
   <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
@@ -417,8 +418,8 @@ function pointInBoundary(lat, lng) {
 
 const map = L.map('map', { zoomControl: true, doubleClickZoom: false }).setView(CENTER, ZOOM);
 
-// Draw game boundary (dashed white/grey outline, no fill)
-L.polygon(GAME_BOUNDARY, {
+// Draw game boundary (dashed outline, no fill) — color changes with map mode
+const gameBoundaryLayer = L.polygon(GAME_BOUNDARY, {
   color: '#e0e0e0', weight: 2.5, opacity: 0.75,
   fill: false, dashArray: '8 6', interactive: false
 }).addTo(map).bindTooltip('Game boundary', { sticky: true, className: 'fpv-eta-tip' });
@@ -426,19 +427,34 @@ L.polygon(GAME_BOUNDARY, {
 const satelliteLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
   attribution: '&copy; Google', maxZoom: 21, subdomains: '0123'
 });
+const hybridLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+  attribution: '&copy; Google', maxZoom: 21, subdomains: '0123'
+});
 const elevationLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenTopoMap contributors', maxZoom: 17, opacity: 0.92,
   subdomains: 'abc'
 });
-let elevMode = false;
-satelliteLayer.addTo(map);
+// mapMode: 'hybrid' | 'satellite' | 'elevation'
+let mapMode = 'hybrid';
+hybridLayer.addTo(map);
 
-function toggleElevationMap() {
-  elevMode = !elevMode;
-  if (elevMode) { map.removeLayer(satelliteLayer); elevationLayer.addTo(map); }
-  else          { map.removeLayer(elevationLayer); satelliteLayer.addTo(map); }
-  document.getElementById('elev-btn').classList.toggle('ruler-on', elevMode);
+const MAP_MODES = ['hybrid', 'satellite', 'elevation'];
+const MAP_MODE_LABELS = { hybrid: '🗺 HYB', satellite: '🛰 SAT', elevation: '⛰ ELV' };
+const MAP_MODE_LAYERS = { hybrid: hybridLayer, satellite: satelliteLayer, elevation: elevationLayer };
+
+function cycleMapMode() {
+  const prev = mapMode;
+  mapMode = MAP_MODES[(MAP_MODES.indexOf(mapMode) + 1) % MAP_MODES.length];
+  map.removeLayer(MAP_MODE_LAYERS[prev]);
+  MAP_MODE_LAYERS[mapMode].addTo(map);
+  document.getElementById('elev-btn').textContent = MAP_MODE_LABELS[mapMode];
+  document.getElementById('elev-btn').classList.toggle('ruler-on', mapMode === 'elevation');
+  // Boundary contrast: dark dashed on elevation, white on satellite/hybrid
+  const isElev = mapMode === 'elevation';
+  gameBoundaryLayer.setStyle({ color: isElev ? '#222' : '#e0e0e0', opacity: isElev ? 0.9 : 0.75 });
 }
+// legacy alias used by the ⛰ button onclick
+function toggleElevationMap() { cycleMapMode(); }
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
@@ -447,9 +463,10 @@ const OVERPASS_ENDPOINTS = [
 ];
 
 async function fetchAreas() {
-  const [clat, clng] = CENTER;
-  const bbox = `${clat - BBOX_PAD},${clng - BBOX_PAD},${clat + BBOX_PAD},${clng + BBOX_PAD}`;
-  const q = `[out:json][timeout:45];(
+  // Use the full game boundary extents so rivers/streams across the whole map are loaded
+  const _lats = GAME_BOUNDARY.map(p=>p[0]), _lngs = GAME_BOUNDARY.map(p=>p[1]);
+  const bbox = `${Math.min(..._lats)-0.01},${Math.min(..._lngs)-0.01},${Math.max(..._lats)+0.01},${Math.max(..._lngs)+0.01}`;
+  const q = `[out:json][timeout:60];(
     way["natural"="wood"](${bbox});
     relation["natural"="wood"](${bbox});
     way["landuse"="residential"](${bbox});
@@ -461,6 +478,7 @@ async function fetchAreas() {
     relation["natural"="water"](${bbox});
     way["waterway"~"river|canal"](${bbox});
     way["waterway"~"stream|ditch"](${bbox});
+    way["bridge"="yes"]["highway"](${bbox});
   );out body;>;out skel qt;`;
 
   for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -534,6 +552,7 @@ function extractPolygons(data) {
   const polys = []; // terrain: { ring, urban }
   const wPolys = []; // water bodies: { ring }
   const rLines = []; // rivers: [ [lat,lng], ... ]
+  const bSegs = []; // bridge segments: [[lat,lng],[lat,lng]]
 
   for (const el of data.elements) {
     if (el.type === 'way') {
@@ -557,6 +576,10 @@ function extractPolygons(data) {
         const pts = el.nodes.map(id => nodeMap[id]).filter(Boolean);
         if (pts.length >= 2) rLines.push({ pts, major: false });
       }
+      if (el.tags?.bridge === 'yes' && el.tags?.highway) {
+        const pts = el.nodes.map(id => nodeMap[id]).filter(Boolean);
+        for (let i = 0; i < pts.length - 1; i++) bSegs.push([pts[i], pts[i+1]]);
+      }
     }
     if (el.type === 'relation') {
       if (el.tags?.natural === 'wood') {
@@ -574,7 +597,7 @@ function extractPolygons(data) {
       polys.push({ ring: circlePolyAround(el.lat, el.lon, 300), urban: true });
     }
   }
-  return { polys, wPolys, rLines };
+  return { polys, wPolys, rLines, bSegs };
 }
 
 // Contact line — traced from the image (west → east)
@@ -736,6 +759,7 @@ const WALK_MS = 1.111 * TIME_SCALE;
 let terrainPolys = []; // [{ ring, urban }]  urban=true→village/buildings, false→forest
 let waterPolys   = []; // large water bodies — impassable except infantry (very slow)
 let riverLines   = []; // rivers/streams — slow everybody, block artillery
+let bridgeSegs   = []; // bridge road segments — waterway crossings here are allowed
 let spawnPolys   = []; // alias kept for spawn functions — set alongside terrainPolys
 
 function terrainAt(pt) {
@@ -762,15 +786,26 @@ function waterAt(pt) {
   return null;
 }
 
-// Check if a route segment list crosses water; returns first crossing type or null
+// True if a point is near any bridge segment (~35m tolerance)
+function nearBridge(pt) {
+  const BRIDGE_THR = 0.00035; // ~35m
+  for (const [a, b] of bridgeSegs) {
+    if (pointNearSegment(pt, a, b, BRIDGE_THR)) return true;
+  }
+  return false;
+}
+
+// Check if a route crosses water; skips crossings that are on a bridge.
+// Returns first crossing type ('water'|'river'|'stream') or null.
 function routeWaterCrossing(points, role) {
   for (let i = 0; i < points.length - 1; i++) {
-    const steps = 6;
+    const steps = 8;
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
-      const pt = [points[i][0]+(points[i+1][0]-points[i][0])*t, points[i][1]+(points[i+1][1]-points[i][1])*t];
+      const pt = [points[i][0]+(points[i+1][0]-points[i][0])*t,
+                  points[i][1]+(points[i+1][1]-points[i][1])*t];
       const w = waterAt(pt);
-      if (w) return w;
+      if (w && !nearBridge(pt)) return w;
     }
   }
   return null;
@@ -940,6 +975,20 @@ function updateWeatherWidget() {
   const gcol = gfc > 0.8 ? '#66bb6a' : gfc > 0.5 ? '#ffa726' : '#ef5350';
   el.innerHTML = `${desc} &nbsp;💨 ${wind.toFixed(0)} m/s &nbsp;👁 ${visStr} &nbsp;<span style="color:${col}">drone ${Math.round(fc*100)}%</span> &nbsp;<span style="color:${gcol}">ground ${Math.round(gfc*100)}%</span>`;
 }
+
+// ── local time clock (UTC+3, Donetsk/Zaporizhzhia area) ──────
+function updateClock() {
+  const el = document.getElementById('clock-widget');
+  if (!el) return;
+  const now = new Date();
+  const utc3 = new Date(now.getTime() + 3 * 3600000);
+  const hh = String(utc3.getUTCHours()).padStart(2, '0');
+  const mm = String(utc3.getUTCMinutes()).padStart(2, '0');
+  const ss = String(utc3.getUTCSeconds()).padStart(2, '0');
+  el.textContent = `🕐 ${hh}:${mm}:${ss} UTC+3`;
+}
+updateClock();
+setInterval(updateClock, 1000);
 
 // ── mavic patrol route ────────────────────────────────────────
 let patrolMode = false, patrolActor = null;
@@ -2417,7 +2466,7 @@ const DEP_MAX_PER_TYPE = 2; // max TDPs per role per side
 
 // Real-world ms between auto-spawns, and how many soldiers spawn each time
 const TDP_SPAWN_INTERVAL_MS = { infantry: 2*60*1000, fpv: 5*60*1000, mavic: 5*60*1000, artillery: 10*60*1000, mortar: 7*60*1000 };
-const TDP_SPAWN_COUNT       = { infantry: 1, fpv: 3, mavic: 1, artillery: 1, mortar: 1 };
+const TDP_SPAWN_COUNT       = { infantry: 2, fpv: 4, mavic: 1, artillery: 1, mortar: 1 };
 
 function depPointIcon(side, role) {
   const col = DEP_ROLE_COLORS[role] ?? (side === 'blue' ? '#42a5f5' : '#ef5350');
@@ -3344,8 +3393,8 @@ function assignRoute(marker, route) {
     updateFortBadge(marker);
     unitLog(marker, 'Abandoned fortified position — fort level reset');
   }
-  // Water crossing warning (large bodies only — rivers are always passable)
-  if (waterPolys.length > 0) {
+  // Water crossing check (runs whenever map data is loaded)
+  if (waterPolys.length > 0 || riverLines.length > 0) {
     const crossing = routeWaterCrossing(route, marker._role);
     if (crossing === 'water') {
       if (marker._role === 'infantry') {
@@ -3415,6 +3464,9 @@ function selectForRoute(marker) {
 // Called when user clicks map while a unit is selected but drawMode not yet active
 function beginDrawForSelected(firstLatlng) {
   if (!activeMarker || !activePanel) return false;
+  if (!pointInBoundary(firstLatlng.lat, firstLatlng.lng)) {
+    showToast('Outside game boundary', '#ef5350'); return false;
+  }
   if (movingMarkers.has(activeMarker)) clearRoute(activeMarker);
   activePanel = activeMarker;
   drawMode = true;
@@ -4087,7 +4139,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-O';
+const VERSION = '2026-06-24-P';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4178,6 +4230,8 @@ function updateMergeBadges() {} // no-op — merge is handled via the unit panel
 
 function tdpSpawn(dp, now) {
   const dpPos = [dp.marker.getLatLng().lat, dp.marker.getLatLng().lng];
+  // Don't spawn outside the game boundary
+  if (!pointInBoundary(dpPos[0], dpPos[1])) return;
   const spawnCount = TDP_SPAWN_COUNT[dp.role] ?? 1;
 
   // Look for an idle unit of same side+role sitting at the TDP (within 80m, not yet moving on a route)
@@ -4718,6 +4772,14 @@ async function main() {
         saveToGitHub(cleaned);
       }
       if (swHandoffEvents?.length) applySWHandoff(swHandoffEvents);
+      // Relocate any units that ended up outside the game boundary back to CENTER
+      for (const m of allMarkers) {
+        const pos = markerPos(m);
+        if (!pointInBoundary(pos[0], pos[1])) {
+          m.setLatLng(CENTER);
+          showToast(`${m._role} relocated — was outside game boundary`, '#ffa726');
+        }
+      }
       document.getElementById('loading').style.display = 'none';
       loadAnnotations();
       fetchWeather();
@@ -4735,6 +4797,7 @@ async function main() {
     spawnPolys   = terrainPolys; // module-level alias used by spawn helpers
     waterPolys   = extracted.wPolys;
     riverLines   = extracted.rLines;
+    bridgeSegs   = extracted.bSegs;
 
     if (!spawnPolys.length) {
       showError('No spawn areas found in this area.');
@@ -4751,6 +4814,7 @@ async function main() {
       for (let t = 0; t < 120; t++) {
         const pt = randomInAny(spawnPolys);
         if (!pt) continue;
+        if (!pointInBoundary(pt[0], pt[1])) continue;
         if (isNorthOfLine(pt) !== northSide) continue;
         const d = distToLine(pt);
         if (d < minDeg || d > maxDeg) continue;
