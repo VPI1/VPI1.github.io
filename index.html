@@ -3858,6 +3858,7 @@ function startFBListeners() {
 
 function fbSyncUnit(m) {
   if (!_fbDb || _fbApplying || !m._uid) return;
+  if (m._side !== userSide) return; // only push units belonging to our side
   const pos   = m.getLatLng();
   const state = movingMarkers.has(m) ? movingMarkers.get(m) : null;
   const route = state
@@ -3883,7 +3884,19 @@ function fbRemoveUnit(m) {
 
 function fbPushAllUnits() {
   if (!_fbDb) return;
-  for (const m of allMarkers) fbSyncUnit(m);
+  // Read Firebase first: apply any state from other clients, then push only our own side
+  _fbDb.ref('units').once('value', snap => {
+    const all = snap.val() || {};
+    // Apply remote units (other clients' data wins over our stale localStorage)
+    for (const uid of Object.keys(all)) {
+      const d = all[uid];
+      if (d && !d.removed && d.clientId !== _fbClientId) applyRemoteUnit(d);
+    }
+    // Push only our own side's units (never overwrite the other side's data)
+    for (const m of allMarkers) {
+      if (m._side === userSide) fbSyncUnit(m);
+    }
+  });
 }
 
 function fbSyncAnnotations() {
