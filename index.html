@@ -1823,6 +1823,7 @@ function _buildActTab(m, now, moving) {
   }
 
   h += `<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.04);padding-top:8px">`;
+  h += _pb('Disband Unit', '✕', 'atk', "_pa('disband')");
   h += _pb('Close Panel', '', '', "_pa('cancel-draw')");
   h += `</div>`;
   return h;
@@ -1915,6 +1916,16 @@ window._pa = function(action) {
       !movingMarkers.has(other) && segMeters(markerPos(m), markerPos(other)) <= MERGE_DIST_M
     );
     if (target) mergeUnits(m, target);
+  } else if (action === 'disband') {
+    if (confirm(`Disband this ${m._role} unit (${m._count} soldiers)?`)) {
+      clearRoute(m);
+      closePanel();
+      fbRemoveUnit(m);
+      map.removeLayer(m);
+      allMarkers.splice(allMarkers.indexOf(m), 1);
+      saveState();
+      showToast('Unit disbanded', '#888');
+    }
   } else if (action === 'cancel-draw') {
     cancelDraw(); closePanel();
   } else if (action === 'redraw') {
@@ -3503,24 +3514,8 @@ setInterval(() => {
   // keep range circle centred on selected unit as it moves
   updatePanelRange();
 
-  // ── auto-merge units stacked within 5m (same side+role, both idle) ──
-  const now = Date.now();
-  const merged5m = new Set();
-  for (const a of allMarkers) {
-    if (merged5m.has(a) || a._side !== userSide || movingMarkers.has(a)) continue;
-    if (a._splitAt && now - a._splitAt < 30000) continue; // cooldown after split
-    for (const b of allMarkers) {
-      if (b === a || merged5m.has(b) || b._side !== a._side || b._role !== a._role || movingMarkers.has(b)) continue;
-      if (b._splitAt && now - b._splitAt < 30000) continue;
-      if (segMeters(markerPos(a), markerPos(b)) <= 5) {
-        merged5m.add(a); merged5m.add(b);
-        mergeUnits(a, b);
-        break;
-      }
-    }
-  }
-
   // ── TDP auto-spawn ──
+  const now = Date.now();
   for (const dp of deploymentPoints) {
     if (!dp._nextSpawnAt || dp._nextSpawnAt > now) continue;
     tdpSpawn(dp, now);
@@ -4004,7 +3999,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-L';
+const VERSION = '2026-06-24-M';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4110,6 +4105,7 @@ function tdpSpawn(dp, now) {
     if (atTDP._soldiers) {
       const newSols = randomComposition(spawnCount);
       atTDP._soldiers.push(...newSols);
+      atTDP._soldiers = atTDP._soldiers.map((s, i) => ({ ...s, id: i })); // keep IDs unique
       atTDP._ammo    += newSols.reduce((s, sol) => s + sol.ammo, 0);
       atTDP._maxAmmo += newSols.reduce((s, sol) => s + SOLDIER_ROLES[sol.role].ammo, 0);
     } else {
@@ -4143,7 +4139,9 @@ function mergeUnits(a, b) {
   // Combine ammo
   merged._ammo    = (a._ammo ?? 0) + (b._ammo ?? 0);
   merged._maxAmmo = (a._maxAmmo ?? 0) + (b._maxAmmo ?? 0);
-  if (a._soldiers && b._soldiers) merged._soldiers = [...a._soldiers, ...b._soldiers];
+  if (a._soldiers && b._soldiers) {
+    merged._soldiers = [...a._soldiers, ...b._soldiers].map((s, i) => ({ ...s, id: i }));
+  }
   selectForRoute(merged);
   fbSyncUnit(merged);
   saveState();
@@ -4613,6 +4611,14 @@ async function main() {
       try { localStorage.setItem(SAVE_KEY, JSON.stringify(bestState)); } catch {}
     }
 
+    // Strip any legacy "all" type deployment points from current session
+    for (const dp of [...deploymentPoints]) {
+      if (dp.role === 'all') {
+        if (dp.routeLine) map.removeLayer(dp.routeLine);
+        map.removeLayer(dp.marker);
+        deploymentPoints.splice(deploymentPoints.indexOf(dp), 1);
+      }
+    }
     if (loadSavedState()) {
       // Apply pending events queued by GH Actions ticks while nobody was online
       const pending = bestState?._pendingEvents;
