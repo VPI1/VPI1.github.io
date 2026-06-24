@@ -3824,14 +3824,20 @@ function initFirebase() {
 function startFBListeners() {
   if (!_fbDb) return;
 
-  // ── unit routes & positions ──
-  _fbDb.ref('units').on('child_added',   snap => applyRemoteUnit(snap.val()));
-  _fbDb.ref('units').on('child_changed', snap => applyRemoteUnit(snap.val()));
-  _fbDb.ref('units').on('child_removed', snap => {
-    const d = snap.val();
-    if (!d || d.clientId === _fbClientId) return;
-    const m = allMarkers.find(mk => mk._uid === d.uid);
-    if (m) { _fbApplying = true; map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); _fbApplying = false; }
+  // ── units: single value listener covers add/change/remove reliably ──
+  _fbDb.ref('units').on('value', snap => {
+    const all = snap.val();
+    if (!all) return;
+    for (const uid of Object.keys(all)) {
+      const d = all[uid];
+      if (!d || d.clientId === _fbClientId) continue; // skip our own writes
+      if (d.removed) {
+        const m = allMarkers.find(mk => mk._uid === uid);
+        if (m) { _fbApplying = true; try { map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); } finally { _fbApplying = false; } }
+      } else {
+        applyRemoteUnit(d);
+      }
+    }
   });
 
   // ── annotations ──
@@ -3839,17 +3845,14 @@ function startFBListeners() {
     const d = snap.val();
     if (!d || d.clientId === _fbClientId) return;
     _fbApplying = true;
-    // Clear all layers and redraw from remote
-    for (const a of annotationLayers) {
-      map.removeLayer(a.layer);
-      if (a.head) map.removeLayer(a.head);
-    }
-    annotationLayers.length = 0;
-    if (d.items?.length) {
-      try { localStorage.setItem('annotations_' + userSide, JSON.stringify(d.items)); } catch {}
-      loadAnnotations();
-    }
-    _fbApplying = false;
+    try {
+      for (const a of annotationLayers) { map.removeLayer(a.layer); if (a.head) map.removeLayer(a.head); }
+      annotationLayers.length = 0;
+      if (d.items?.length) {
+        try { localStorage.setItem('annotations_' + userSide, JSON.stringify(d.items)); } catch {}
+        loadAnnotations();
+      }
+    } finally { _fbApplying = false; }
   });
 }
 
@@ -3885,12 +3888,16 @@ function fbPushAllUnits() {
 
 function fbSyncAnnotations() {
   if (!_fbDb || _fbApplying) return;
-  const data = annotationLayers.map(a => {
-    if (a.type === 'note')   return { type: 'note',   latlng: a.latlng, text: a.text, color: a.color };
-    if (a.type === 'circle') return { type: 'circle', center: a.center, radius: a.radius, color: a.color, weight: a.weight };
-    return { type: a.type, points: a.points, color: a.color, weight: a.weight };
-  });
-  _fbDb.ref(`annotations_${userSide}`).set({ clientId: _fbClientId, items: data, updatedAt: Date.now() });
+  clearTimeout(fbSyncAnnotations._t);
+  fbSyncAnnotations._t = setTimeout(() => {
+    if (!_fbDb || _fbApplying) return;
+    const data = annotationLayers.map(a => {
+      if (a.type === 'note')   return { type: 'note',   latlng: a.latlng, text: a.text, color: a.color };
+      if (a.type === 'circle') return { type: 'circle', center: a.center, radius: a.radius, color: a.color, weight: a.weight };
+      return { type: a.type, points: a.points ?? [], color: a.color, weight: a.weight };
+    });
+    _fbDb.ref(`annotations_${userSide}`).set({ clientId: _fbClientId, items: data, updatedAt: Date.now() });
+  }, 300);
 }
 
 function applyRemoteUnit(d) {
