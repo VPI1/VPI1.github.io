@@ -4010,23 +4010,29 @@ function initFirebase() {
 
 function startFBListeners() {
   if (!_fbDb) return;
-  const otherSide = userSide === 'blue' ? 'red' : 'blue';
 
-  // ── listen ONLY to the other side's namespace ──
-  _fbDb.ref(`units_${otherSide}`).on('value', snap => {
+  // Listen to BOTH sides so two tabs on the same side also stay in sync.
+  // Own units pushed by this client are identified by clientId and skipped.
+  function handleSideSnapshot(snap) {
     const all = snap.val() || {};
+    const side = snap.ref.key.replace('units_', '');
     _fbApplying = true;
     try {
-      // Remove other-side markers that are no longer in Firebase
-      for (const m of allMarkers.filter(mk => mk._side === otherSide)) {
+      // Remove markers for this side that disappeared from Firebase
+      for (const m of allMarkers.filter(mk => mk._side === side)) {
         if (!all[m._uid]) { map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); }
       }
-      // Apply/update all entries from the other side
       for (const d of Object.values(all)) {
-        if (d) applyRemoteUnit(d);
+        if (!d) continue;
+        // Skip echoes of units this exact client pushed
+        if (d.clientId === _fbClientId) continue;
+        applyRemoteUnit(d);
       }
     } finally { _fbApplying = false; }
-  });
+  }
+
+  _fbDb.ref('units_blue').on('value', handleSideSnapshot);
+  _fbDb.ref('units_red').on('value', handleSideSnapshot);
 
   // ── annotations ──
   _fbDb.ref(`annotations_${userSide}`).on('value', snap => {
@@ -4056,6 +4062,7 @@ function fbSyncUnit(m) {
     uid: m._uid, lat: pos.lat, lng: pos.lng,
     side: m._side, role: m._role, count: m._count,
     remainingRoute: route, updatedAt: Date.now(),
+    clientId: _fbClientId,
   }).catch(e => console.warn('FB write error:', e));
 }
 
@@ -4139,7 +4146,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-T';
+const VERSION = '2026-06-25-U';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
