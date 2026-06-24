@@ -3795,6 +3795,14 @@ function createMarker(pt, side, count, role = '') {
 // ── state persistence ─────────────────────────────────────────
 // ── Firebase real-time multiplayer sync ───────────────────────────────────
 const FB_KEY      = 'tactical_map_firebase';
+// Default config — works for everyone without manual setup
+const FB_DEFAULT_CFG = {
+  apiKey: "AIzaSyCH2oRTwX9-MgIqdzD-VJzRcKNP5Qo05Wk",
+  authDomain: "vpi1-88c4b.firebaseapp.com",
+  databaseURL: "https://vpi1-88c4b-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "vpi1-88c4b",
+  appId: "1:48598502792:web:9baf23c3d023ea26653e3d"
+};
 const _fbClientId = (() => {
   // sessionStorage is per-tab — each tab gets a unique ID so they don't ignore each other's Firebase updates
   let id = sessionStorage.getItem('_fbClientId');
@@ -3804,7 +3812,7 @@ const _fbClientId = (() => {
 let _fbDb         = null;
 let _fbApplying   = false;  // guard: don't re-broadcast changes we received
 
-function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || {}; } catch { return {}; } }
+function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || FB_DEFAULT_CFG; } catch { return FB_DEFAULT_CFG; } }
 function setFBConfig(c) { localStorage.setItem(FB_KEY, JSON.stringify(c)); }
 
 function initFirebase() {
