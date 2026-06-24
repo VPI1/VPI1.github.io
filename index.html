@@ -4139,7 +4139,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-R';
+const VERSION = '2026-06-24-S';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4887,6 +4887,7 @@ async function main() {
       for (let t = 0; t < tries; t++) {
         const pt = randomInAny(spawnPolys);
         if (!pt) continue;
+        if (!pointInBoundary(pt[0], pt[1])) continue;
         if (isNorthOfLine(pt) !== northSide) continue;
         const d = distToLine(pt);
         if (d < minD || d > maxD) continue;
@@ -4921,6 +4922,7 @@ async function main() {
       for (let t = 0; t < 150; t++) {
         const pt = randomInAny(spawnPolys);
         if (!pt) continue;
+        if (!pointInBoundary(pt[0], pt[1])) continue;
         if (isNorthOfLine(pt) !== northSide) continue;
         const d = distToLine(pt);
         if (d < minDeg || d > maxDeg) continue;
