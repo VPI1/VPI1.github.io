@@ -4135,10 +4135,11 @@ function loadSavedState() {
     if (!raw) return false;
     const { units, depPoints, savedAt } = JSON.parse(raw);
     if (!units || !units.length) return false;
-    for (const u of units) {
+    for (let _i = 0; _i < units.length; _i++) { const u = units[_i];
       if (!u.count || u.count <= 0) continue; // skip dead/corrupted units
       const m = createMarker([u.lat, u.lng], u.side, u.count, u.role);
-      if (u.uid) m._uid = u.uid; // restore stable ID so Firebase can match across sessions
+      // Deterministic fallback: both tabs load same localStorage in same order → same UID
+      m._uid = u.uid || (u.side + '_' + u.role + '_' + _i);
       m._ammo = u.ammo ?? 0;
       m._maxAmmo = u.maxAmmo ?? 0;
       m._drones = u.drones ?? 0;
