@@ -3796,8 +3796,9 @@ function createMarker(pt, side, count, role = '') {
 // ── Firebase real-time multiplayer sync ───────────────────────────────────
 const FB_KEY      = 'tactical_map_firebase';
 const _fbClientId = (() => {
-  let id = localStorage.getItem('_fbClientId');
-  if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('_fbClientId', id); }
+  // sessionStorage is per-tab — each tab gets a unique ID so they don't ignore each other's Firebase updates
+  let id = sessionStorage.getItem('_fbClientId');
+  if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem('_fbClientId', id); }
   return id;
 })();
 let _fbDb         = null;
