@@ -4139,7 +4139,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-Q';
+const VERSION = '2026-06-24-R';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4321,15 +4321,16 @@ function resetMap() {
 
   // 6. Clear Firebase + GitHub, then reload
   const empty = { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] };
-  // Mark reset timestamp in localStorage so ALL tabs discard state older than this
+  // RESET_KEY in localStorage tells ALL tabs (shared storage) to discard stale state
   localStorage.setItem(RESET_KEY, Date.now().toString());
-  const doReload = async () => {
-    await saveToGitHub(empty).catch(() => {}); // wait for GitHub save before reload
-    location.reload();
-  };
+  saveToGitHub(empty); // fire-and-forget — RESET_KEY is the authoritative cross-tab signal
+  const doReload = () => location.reload();
   if (_fbDb) {
+    // Give Firebase up to 3 s; reload regardless so the button never hangs
+    const fbTimeout = setTimeout(doReload, 3000);
     Promise.all([_fbDb.ref('units_blue').remove(), _fbDb.ref('units_red').remove()])
-      .then(doReload).catch(doReload);
+      .then(() => { clearTimeout(fbTimeout); doReload(); })
+      .catch(() => { clearTimeout(fbTimeout); doReload(); });
   } else {
     doReload();
   }
