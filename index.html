@@ -1816,6 +1816,18 @@ function _buildActTab(m, now, moving) {
     }
   }
 
+  // Merge button — shown when a nearby same-side/same-role unit exists
+  const mergeTarget = allMarkers.find(other =>
+    other !== m && other._side === m._side && other._role === m._role &&
+    !movingMarkers.has(other) && segMeters(markerPos(m), markerPos(other)) <= MERGE_DIST_M
+  );
+  if (mergeTarget) {
+    const total = m._count + mergeTarget._count;
+    h += `<div style="margin-top:8px;border-top:1px solid rgba(255,165,0,0.3);padding-top:8px">`;
+    h += _pb(`Merge with nearby unit (→ ${total} ${m._role})`, '⊕', 'tac', "_pa('merge')");
+    h += `</div>`;
+  }
+
   h += `<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.04);padding-top:8px">`;
   h += _pb('Close Panel', '', '', "_pa('cancel-draw')");
   h += `</div>`;
@@ -1903,6 +1915,12 @@ window._pa = function(action) {
   } else if (action === 'adj+1') {
     pendingSplitCount = Math.min(m._count, (pendingSplitCount ?? m._count) + 1);
     renderPanel();
+  } else if (action === 'merge') {
+    const target = allMarkers.find(other =>
+      other !== m && other._side === m._side && other._role === m._role &&
+      !movingMarkers.has(other) && segMeters(markerPos(m), markerPos(other)) <= MERGE_DIST_M
+    );
+    if (target) mergeUnits(m, target);
   } else if (action === 'cancel-draw') {
     cancelDraw(); closePanel();
   } else if (action === 'redraw') {
