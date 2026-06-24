@@ -3500,6 +3500,7 @@ setInterval(() => {
   }
   // keep range circle centred on selected unit as it moves
   updatePanelRange();
+  updateMergeBadges();
 
   // ── per-marker timers + fog of war ──
   const now = Date.now();
@@ -3814,10 +3815,7 @@ function createMarker(pt, side, count, role = '') {
   }
   if (side === userSide) {
     m.dragging.enable();
-    m.on('dragend', () => {
-      checkMergeProposal(m);
-      saveState(); fbSyncUnit(m);
-    });
+    m.on('dragend', () => { saveState(); fbSyncUnit(m); updateMergeBadges(); });
     m.on('click', (e) => { e.originalEvent?.stopPropagation(); _markerClickAt = Date.now(); selectForRoute(m); });
   }
   return m;
@@ -3991,7 +3989,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-G';
+const VERSION = '2026-06-24-H';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4078,32 +4076,35 @@ function openGHConfig() {
 
 const MERGE_DIST_M = 50; // meters — units must be within this distance to merge
 
-function checkMergeProposal(m) {
-  if (m._side !== userSide) return;
-  const pos = markerPos(m);
-  const nearby = allMarkers.find(other =>
-    other !== m &&
-    other._side === m._side &&
-    other._role === m._role &&
-    !movingMarkers.has(other) &&
-    segMeters(pos, markerPos(other)) <= MERGE_DIST_M
-  );
-  if (!nearby) return;
-  const totalCount = m._count + nearby._count;
-  // Show a non-blocking confirmation banner on the map
-  const existing = document.getElementById('merge-banner');
-  if (existing) existing.remove();
-  const banner = document.createElement('div');
-  banner.id = 'merge-banner';
-  banner.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#1a1a2e;border:1px solid #ffa726;border-radius:6px;padding:10px 16px;font-family:monospace;font-size:12px;color:#ffa726;z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 2px 12px #000c';
-  banner.innerHTML = `Merge these two ${nearby._role} units into one (${totalCount} soldiers)?
-    <button id="merge-yes" style="background:#ffa726;color:#000;border:none;padding:3px 10px;border-radius:3px;cursor:pointer;font-weight:bold">Merge</button>
-    <button id="merge-no" style="background:#444;color:#fff;border:none;padding:3px 10px;border-radius:3px;cursor:pointer">Cancel</button>`;
-  document.body.appendChild(banner);
-  banner.querySelector('#merge-yes').onclick = () => { mergeUnits(m, nearby); banner.remove(); };
-  banner.querySelector('#merge-no').onclick  = () => banner.remove();
-  // Auto-dismiss after 8s
-  setTimeout(() => { if (document.getElementById('merge-banner') === banner) banner.remove(); }, 8000);
+// Show/hide floating merge badges on unit icons when pairs are within MERGE_DIST_M
+function updateMergeBadges() {
+  // Clear all existing badges
+  document.querySelectorAll('.merge-badge').forEach(el => el.remove());
+  // Find all mergeable pairs for own side
+  const checked = new Set();
+  for (const m of allMarkers) {
+    if (m._side !== userSide || checked.has(m)) continue;
+    const pos = markerPos(m);
+    const partner = allMarkers.find(other =>
+      other !== m && other._side === m._side && other._role === m._role &&
+      !movingMarkers.has(m) && !movingMarkers.has(other) &&
+      segMeters(pos, markerPos(other)) <= MERGE_DIST_M
+    );
+    if (!partner) continue;
+    checked.add(m); checked.add(partner);
+    // Add badge to both markers
+    [m, partner].forEach(unit => {
+      const el = unit.getElement();
+      if (!el) return;
+      const badge = document.createElement('div');
+      badge.className = 'merge-badge';
+      badge.textContent = '⊕ Merge';
+      badge.style.cssText = 'position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);background:#ffa726;color:#000;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;cursor:pointer;white-space:nowrap;z-index:600;font-family:monospace';
+      badge.onclick = (e) => { e.stopPropagation(); mergeUnits(m, partner); };
+      el.style.position = 'relative';
+      el.appendChild(badge);
+    });
+  }
 }
 
 function mergeUnits(a, b) {
@@ -4127,16 +4128,28 @@ function mergeUnits(a, b) {
 }
 
 function resetMap() {
-  if (!confirm('Reset map? All units, routes and drawings will be cleared.')) return;
-  // Clear Firebase for own side
-  if (_fbDb) _fbDb.ref(`units_${userSide}`).remove();
-  // Clear service worker state
-  if (navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage({ type: 'SAVE_STATE', state: { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] } });
-  // Clear localStorage
+  if (!confirm('Reset map? All units, routes and drawings will be cleared for both sides.')) return;
+  // Clear localStorage immediately
   localStorage.removeItem(SAVE_KEY);
   localStorage.removeItem('annotations_blue');
   localStorage.removeItem('annotations_red');
-  location.reload();
+  // Clear service worker state
+  if (navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage({ type: 'SAVE_STATE', state: { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] } });
+  // Clear Firebase for BOTH sides (full reset), then reload
+  const empty = { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] };
+  const doReload = () => {
+    // Also clear GitHub game-state.json if configured
+    saveToGitHub && saveToGitHub(empty);
+    location.reload();
+  };
+  if (_fbDb) {
+    Promise.all([
+      _fbDb.ref('units_blue').remove(),
+      _fbDb.ref('units_red').remove(),
+    ]).then(doReload).catch(doReload);
+  } else {
+    doReload();
+  }
 }
 
 function saveState() {
