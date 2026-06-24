@@ -3814,6 +3814,7 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
       startFBListeners();
+      setTimeout(fbPushAllUnits, 1000); // push our units after listeners are ready
       showToast('Multiplayer connected', '#66bb6a');
     } catch(e) { console.warn('Firebase init error:', e); }
   });
@@ -3874,6 +3875,11 @@ function fbSyncUnit(m) {
 function fbRemoveUnit(m) {
   if (!_fbDb || _fbApplying || !m._uid) return;
   _fbDb.ref(`units/${m._uid}`).set({ uid: m._uid, clientId: _fbClientId, removed: true });
+}
+
+function fbPushAllUnits() {
+  if (!_fbDb) return;
+  for (const m of allMarkers) fbSyncUnit(m);
 }
 
 function fbSyncAnnotations() {
@@ -4022,6 +4028,7 @@ function saveState() {
   for (const m of allMarkers) {
     const ll = m.getLatLng();
     const u = {
+      uid: m._uid,
       lat: ll.lat, lng: ll.lng,
       side: m._side, count: m._count, role: m._role,
       ammo: m._ammo, maxAmmo: m._maxAmmo, drones: m._drones,
@@ -4094,6 +4101,7 @@ function loadSavedState() {
     for (const u of units) {
       if (!u.count || u.count <= 0) continue; // skip dead/corrupted units
       const m = createMarker([u.lat, u.lng], u.side, u.count, u.role);
+      if (u.uid) m._uid = u.uid; // restore stable ID so Firebase can match across sessions
       m._ammo = u.ammo ?? 0;
       m._maxAmmo = u.maxAmmo ?? 0;
       m._drones = u.drones ?? 0;
