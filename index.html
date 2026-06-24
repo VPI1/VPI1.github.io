@@ -3933,6 +3933,7 @@ function createMarker(pt, side, count, role = '') {
   const m = L.marker(pt, { icon: soldierIcon(side, count, role), draggable: false });
   m._side = side; m._count = count; m._role = role;
   m._uid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  m._ownerClientId = _fbClientId; // track which client created this unit
   m._ammo = 0; m._maxAmmo = 0; m._drones = 0;
   m._fpvReadyAt = 0; m._fpvCooldownUntil = 0; m._artPending = null;
   m._suppressedUntil = 0;
@@ -4018,14 +4019,19 @@ function startFBListeners() {
     const side = snap.ref.key.replace('units_', '');
     _fbApplying = true;
     try {
-      // Remove markers for this side that disappeared from Firebase
       for (const m of allMarkers.filter(mk => mk._side === side)) {
-        if (!all[m._uid]) { map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); }
+        if (!all[m._uid]) {
+          // Only remove a marker if it was created by a remote client.
+          // Never remove a unit this tab spawned based on an empty/stale snapshot —
+          // Firebase fires before fbPushAllUnits has had a chance to push.
+          if (m._ownerClientId !== _fbClientId) {
+            map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1);
+          }
+        }
       }
       for (const d of Object.values(all)) {
         if (!d) continue;
-        // Skip echoes of units this exact client pushed
-        if (d.clientId === _fbClientId) continue;
+        if (d.clientId === _fbClientId) continue; // skip own echoes
         applyRemoteUnit(d);
       }
     } finally { _fbApplying = false; }
@@ -4114,6 +4120,7 @@ function applyRemoteUnit(d) {
     } else if (d.uid && d.side && d.role && d.lat != null) {
       const m = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
       m._uid = d.uid;
+      m._ownerClientId = d.clientId; // mark as owned by the remote client
       if (d.remainingRoute?.length >= 2) assignRoute(m, d.remainingRoute);
     }
   } finally { _fbApplying = false; }
@@ -4146,7 +4153,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-25-U';
+const VERSION = '2026-06-25-V';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
