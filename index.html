@@ -3832,16 +3832,20 @@ function initFirebase() {
 function startFBListeners() {
   if (!_fbDb) return;
 
+  // ── connection health monitor ──
+  _fbDb.ref('.info/connected').on('value', snap => {
+    showToast(snap.val() ? 'Firebase: ONLINE' : 'Firebase: OFFLINE', snap.val() ? '#66bb6a' : '#ef5350');
+  });
+
   // ── units: single value listener covers add/change/remove reliably ──
   _fbDb.ref('units').on('value', snap => {
     const all = snap.val();
-    console.log('[FB] units value fired, keys:', all ? Object.keys(all) : 'null');
+    const remoteKeys = all ? Object.keys(all).filter(uid => all[uid]?.clientId !== _fbClientId) : [];
+    if (remoteKeys.length) showToast('FB update: ' + remoteKeys.length + ' remote unit(s)', '#42a5f5');
     if (!all) return;
     for (const uid of Object.keys(all)) {
       const d = all[uid];
-      if (!d) continue;
-      console.log('[FB] unit', uid, 'clientId:', d.clientId, 'mine:', _fbClientId, 'skip:', d.clientId === _fbClientId);
-      if (d.clientId === _fbClientId) continue;
+      if (!d || d.clientId === _fbClientId) continue;
       if (d.removed) {
         const m = allMarkers.find(mk => mk._uid === uid);
         if (m) { _fbApplying = true; try { map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); } finally { _fbApplying = false; } }
@@ -3849,7 +3853,7 @@ function startFBListeners() {
         applyRemoteUnit(d);
       }
     }
-  }, err => console.error('[FB] units listener error:', err));
+  }, err => showToast('FB listener error: ' + err.message, '#ef5350'));
 
   // ── annotations ──
   _fbDb.ref(`annotations_${userSide}`).on('value', snap => {
@@ -3868,9 +3872,8 @@ function startFBListeners() {
 }
 
 function fbSyncUnit(m) {
-  if (!_fbDb || _fbApplying || !m._uid) { console.log('[FB] fbSyncUnit skipped db:', !!_fbDb, 'applying:', _fbApplying, 'uid:', m._uid); return; }
+  if (!_fbDb || _fbApplying || !m._uid) return;
   if (m._side !== userSide) return;
-  console.log('[FB] fbSyncUnit writing uid:', m._uid, 'side:', m._side);
   const pos   = m.getLatLng();
   const state = movingMarkers.has(m) ? movingMarkers.get(m) : null;
   const route = state
@@ -3886,7 +3889,7 @@ function fbSyncUnit(m) {
     count:         m._count,
     remainingRoute: route,
     updatedAt:     Date.now(),
-  });
+  }).catch(e => showToast('FB write error: ' + e.message, '#ef5350'));
 }
 
 function fbRemoveUnit(m) {
@@ -3927,7 +3930,6 @@ function fbSyncAnnotations() {
 
 function applyRemoteUnit(d) {
   if (!d || d.clientId === _fbClientId) return;
-  console.log('[FB] applyRemoteUnit uid:', d.uid, 'route:', d.remainingRoute?.length, 'existing:', !!allMarkers.find(m => m._uid === d.uid));
   _fbApplying = true;
   try {
     const existing = allMarkers.find(m => m._uid === d.uid);
