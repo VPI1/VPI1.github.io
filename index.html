@@ -2331,6 +2331,10 @@ const DEP_ROLE_COLORS = { infantry:'#66bb6a', fpv:'#ffa726', mavic:'#26c6da', ar
 const DEP_ROLE_LABELS = { infantry:'Inf', fpv:'FPV', mavic:'Mav', artillery:'Art', mortar:'Mor', all:'All' };
 const DEP_MAX_PER_TYPE = 2; // max TDPs per role per side
 
+// Real-world ms between auto-spawns, and how many soldiers spawn each time
+const TDP_SPAWN_INTERVAL_MS = { infantry: 2*60*1000, fpv: 5*60*1000, mavic: 5*60*1000, artillery: 10*60*1000, mortar: 7*60*1000 };
+const TDP_SPAWN_COUNT       = { infantry: 1, fpv: 3, mavic: 1, artillery: 1, mortar: 1 };
+
 function depPointIcon(side, role) {
   const col = DEP_ROLE_COLORS[role] ?? (side === 'blue' ? '#42a5f5' : '#ef5350');
   const lbl = DEP_ROLE_LABELS[role] ?? '⚑';
@@ -2344,7 +2348,9 @@ function depPointIcon(side, role) {
 function createDeploymentPoint(latlng, side, role) {
   role = role || _pendingDeployRole || 'infantry';
   const marker = L.marker([latlng.lat, latlng.lng], { icon: depPointIcon(side, role), draggable: true, zIndexOffset: 500 }).addTo(map);
-  const dp = { marker, side, role, moveRoute: null, routeLine: null };
+  const intervalMs = TDP_SPAWN_INTERVAL_MS[role] ?? 5*60*1000;
+  const dp = { marker, side, role, moveRoute: null, routeLine: null,
+    _nextSpawnAt: Date.now() + intervalMs, _spawnIntervalMs: intervalMs };
   deploymentPoints.push(dp);
   marker.on('click', (e) => { e.originalEvent?.stopPropagation(); openDeployPanel(dp); });
   marker.on('dragend', () => {
@@ -2405,33 +2411,20 @@ function openDeployPanel(dp) {
   panel.querySelector('#dep-clear-btn').onclick     = () => { clearDepRoute(idx); panel.querySelector('#dep-panel-route').textContent = routeStr(); };
   panel.querySelector('#dep-remove-btn').onclick    = () => { removeDeployPoint(idx); closeDeployPanel(); };
 
-  // Live "next reinforcement" ETA
+  // Live spawn countdown
   function updateReinfEta() {
     const el = document.getElementById('dep-panel-reinf');
     if (!el) return;
-    let ms = 0;
-    if (dp._nextReinfAt > Date.now()) {
-      ms = dp._nextReinfAt - Date.now();
-    } else {
-      // Also check any active supply convoys headed to units near this DP
-      const dpPos = [pos.lat, pos.lng];
-      for (const m of allMarkers) {
-        if (m._side === dp.side && m._supply?.type === 'reinf') {
-          if (segMeters(markerPos(m), dpPos) < 1000 && m._supply.arrivesAt > Date.now()) {
-            ms = m._supply.arrivesAt - Date.now();
-            break;
-          }
-        }
-      }
-    }
+    const ms = dp._nextSpawnAt ? Math.max(0, dp._nextSpawnAt - Date.now()) : 0;
+    const spawnCount = TDP_SPAWN_COUNT[dp.role] ?? 1;
     if (ms > 0) {
       const s = Math.ceil(ms / 1000);
       const str = s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
       el.style.color = '#66bb6a';
-      el.textContent = `Next reinforcement in: ${str}`;
+      el.textContent = `Next spawn in: ${str} (+${spawnCount} ${dp.role})`;
     } else {
-      el.style.color = '#666';
-      el.textContent = 'No reinforcement scheduled';
+      el.style.color = '#ffa726';
+      el.textContent = 'Spawning now…';
     }
   }
   updateReinfEta();
@@ -3501,8 +3494,16 @@ setInterval(() => {
   // keep range circle centred on selected unit as it moves
   updatePanelRange();
 
-  // ── per-marker timers + fog of war ──
+  // ── TDP auto-spawn ──
   const now = Date.now();
+  for (const dp of deploymentPoints) {
+    if (!dp._nextSpawnAt || dp._nextSpawnAt > now) continue;
+    tdpSpawn(dp, now);
+    dp._nextSpawnAt = now + dp._spawnIntervalMs;
+    saveState();
+  }
+
+  // ── per-marker timers + fog of war ──
   for (const m of [...allMarkers]) {
     // FPV prep
     if (m._fpvReadyAt > 0 && now >= m._fpvReadyAt) {
@@ -3988,7 +3989,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-I';
+const VERSION = '2026-06-24-J';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4076,6 +4077,43 @@ function openGHConfig() {
 const MERGE_DIST_M = 50; // meters — units must be within this distance to merge
 
 function updateMergeBadges() {} // no-op — merge is handled via the unit panel button
+
+function tdpSpawn(dp, now) {
+  const dpPos = [dp.marker.getLatLng().lat, dp.marker.getLatLng().lng];
+  const spawnCount = TDP_SPAWN_COUNT[dp.role] ?? 1;
+
+  // Look for an idle unit of same side+role sitting at the TDP (within 80m, not yet moving on a route)
+  const atTDP = allMarkers.find(m =>
+    m._side === dp.side && m._role === dp.role &&
+    !movingMarkers.has(m) &&
+    segMeters(markerPos(m), dpPos) <= 80
+  );
+
+  if (atTDP) {
+    // Merge new spawn into existing unit
+    atTDP._count += spawnCount;
+    if (atTDP._soldiers) {
+      const newSols = randomComposition(spawnCount);
+      atTDP._soldiers.push(...newSols);
+      atTDP._ammo    += newSols.reduce((s, sol) => s + sol.ammo, 0);
+      atTDP._maxAmmo += newSols.reduce((s, sol) => s + SOLDIER_ROLES[sol.role].ammo, 0);
+    } else {
+      atTDP._ammo    = Math.min((atTDP._ammo ?? 0) + spawnCount * 8, atTDP._maxAmmo ?? 999);
+    }
+    atTDP.setIcon(soldierIcon(atTDP._side, atTDP._count, atTDP._role));
+    // If route set and unit hasn't left yet, assign route
+    if (dp.moveRoute?.length >= 2) assignRoute(atTDP, dp.moveRoute);
+    unitLog(atTDP, `+${spawnCount} reinforcement${spawnCount > 1 ? 's' : ''} from TDP`);
+    showToast(`TDP: +${spawnCount} ${dp.role} joined (now ${atTDP._count})`, '#66bb6a');
+  } else {
+    // Spawn a fresh unit at TDP position
+    const m = createMarker(dpPos, dp.side, spawnCount, dp.role);
+    if (dp.moveRoute?.length >= 2) {
+      assignRoute(m, dp.moveRoute);
+    }
+    showToast(`TDP: new ${dp.role} unit spawned (${spawnCount})`, '#66bb6a');
+  }
+}
 
 function mergeUnits(a, b) {
   const newCount = a._count + b._count;
@@ -4182,7 +4220,7 @@ function saveState() {
   const savedAt = Date.now();
   const depPoints = deploymentPoints.map(dp => {
     const ll = dp.marker.getLatLng();
-    return { lat: ll.lat, lng: ll.lng, side: dp.side, role: dp.role ?? 'infantry', moveRoute: dp.moveRoute ?? null, nextReinfAt: dp._nextReinfAt ?? 0 };
+    return { lat: ll.lat, lng: ll.lng, side: dp.side, role: dp.role ?? 'infantry', moveRoute: dp.moveRoute ?? null, nextReinfAt: dp._nextReinfAt ?? 0, nextSpawnAt: dp._nextSpawnAt ?? 0 };
   });
   const payload = { units, depPoints, savedAt };
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(payload)); } catch(e) {}
@@ -4309,6 +4347,7 @@ function loadSavedState() {
           redrawDepRoute(created);
         }
         if (dp.nextReinfAt > 0) created._nextReinfAt = dp.nextReinfAt;
+        if (dp.nextSpawnAt > 0) created._nextSpawnAt = dp.nextSpawnAt;
       }
     }
     // Fast-forward time that passed while the page was closed
