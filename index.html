@@ -294,7 +294,6 @@ function loadFirebaseSDK(cb) {
   <button class="dep-role-btn" onclick="selectDepRole('mavic')">Mavic</button>
   <button class="dep-role-btn" onclick="selectDepRole('artillery')">Artillery</button>
   <button class="dep-role-btn" onclick="selectDepRole('mortar')">Mortar</button>
-  <button class="dep-role-btn" onclick="selectDepRole('all')" style="border-color:#556">All types</button>
 </div>
 <div id="toolbar">
   <button class="tb-btn" id="dep-btn" onclick="enterPlaceDeployPoint()" title="Place deployment point">⚑</button>
@@ -302,7 +301,7 @@ function loadFirebaseSDK(cb) {
   <button class="tb-btn" id="annotate-btn" title="Draw annotations">✎</button>
   <button class="tb-btn" id="elev-btn" onclick="toggleElevationMap()" title="Toggle elevation map">⛰</button>
   <button class="tb-btn" id="map3d-btn" onclick="toggle3DMap()" title="Toggle 3D map view">3D</button>
-  <button class="tb-btn" onclick="if(confirm('Reset map? All positions and routes will be lost.')) { localStorage.removeItem('tactical_map_v2'); location.reload(); }" title="Reset map">↺</button>
+  <button class="tb-btn" onclick="resetMap()" title="Reset map">↺</button>
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
   <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
 </div>
@@ -1594,7 +1593,13 @@ function showPanelRange(m) {
 
 function updatePanelRange() {
   if (!activePanel || !panelRangeCircle) return;
-  panelRangeCircle.setLatLng(activePanel.getLatLng());
+  const ll = activePanel.getLatLng();
+  panelRangeCircle.setLatLng(ll);
+  // Recompute radius in case elevation-dependent range changed
+  const newRangeKm = unitDisplayRangeKm(activePanel);
+  if (newRangeKm && Math.abs(panelRangeCircle.getRadius() - newRangeKm * 1000) > 1) {
+    panelRangeCircle.setRadius(newRangeKm * 1000);
+  }
 }
 
 function closePanel() {
@@ -2487,7 +2492,7 @@ function selectDepRole(role) {
 
 // Find nearest deployment point for a side and role
 function nearestDepPoint(side, role, pos) {
-  const pts = deploymentPoints.filter(d => d.side === side && (d.role === role || d.role === 'all'));
+  const pts = deploymentPoints.filter(d => d.side === side && d.role === role);
   if (!pts.length) return null;
   if (pts.length === 1) return pts[0];
   let best = pts[0], bestD = segMeters(markerPos(best.marker), pos);
@@ -3786,7 +3791,10 @@ function createMarker(pt, side, count, role = '') {
   }
   if (side === userSide) {
     m.dragging.enable();
-    m.on('dragend', () => { saveState(); fbSyncUnit(m); });
+    m.on('dragend', () => {
+      checkMergeProposal(m);
+      saveState(); fbSyncUnit(m);
+    });
     m.on('click', (e) => { e.originalEvent?.stopPropagation(); _markerClickAt = Date.now(); selectForRoute(m); });
   }
   return m;
@@ -4038,6 +4046,69 @@ function openGHConfig() {
     </div>
   `;
   document.body.appendChild(panel);
+}
+
+const MERGE_DIST_M = 200; // meters — drag within this to trigger merge prompt
+
+function checkMergeProposal(m) {
+  if (m._side !== userSide) return;
+  const pos = markerPos(m);
+  const nearby = allMarkers.find(other =>
+    other !== m &&
+    other._side === m._side &&
+    other._role === m._role &&
+    !movingMarkers.has(other) &&
+    segMeters(pos, markerPos(other)) <= MERGE_DIST_M
+  );
+  if (!nearby) return;
+  const totalCount = m._count + nearby._count;
+  // Show a non-blocking confirmation banner on the map
+  const existing = document.getElementById('merge-banner');
+  if (existing) existing.remove();
+  const banner = document.createElement('div');
+  banner.id = 'merge-banner';
+  banner.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#1a1a2e;border:1px solid #ffa726;border-radius:6px;padding:10px 16px;font-family:monospace;font-size:12px;color:#ffa726;z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 2px 12px #000c';
+  banner.innerHTML = `Merge these two ${nearby._role} units into one (${totalCount} soldiers)?
+    <button id="merge-yes" style="background:#ffa726;color:#000;border:none;padding:3px 10px;border-radius:3px;cursor:pointer;font-weight:bold">Merge</button>
+    <button id="merge-no" style="background:#444;color:#fff;border:none;padding:3px 10px;border-radius:3px;cursor:pointer">Cancel</button>`;
+  document.body.appendChild(banner);
+  banner.querySelector('#merge-yes').onclick = () => { mergeUnits(m, nearby); banner.remove(); };
+  banner.querySelector('#merge-no').onclick  = () => banner.remove();
+  // Auto-dismiss after 8s
+  setTimeout(() => { if (document.getElementById('merge-banner') === banner) banner.remove(); }, 8000);
+}
+
+function mergeUnits(a, b) {
+  const newCount = a._count + b._count;
+  const keepPos  = markerPos(a);
+  // Remove both, create merged unit
+  clearRoute(a); clearRoute(b);
+  if (activePanel === a || activePanel === b) closePanel();
+  map.removeLayer(a); allMarkers.splice(allMarkers.indexOf(a), 1);
+  map.removeLayer(b); allMarkers.splice(allMarkers.indexOf(b), 1);
+  fbRemoveUnit(a); fbRemoveUnit(b);
+  const merged = createMarker(keepPos, a._side, newCount, a._role);
+  // Combine ammo
+  merged._ammo    = (a._ammo ?? 0) + (b._ammo ?? 0);
+  merged._maxAmmo = (a._maxAmmo ?? 0) + (b._maxAmmo ?? 0);
+  if (a._soldiers && b._soldiers) merged._soldiers = [...a._soldiers, ...b._soldiers];
+  selectForRoute(merged);
+  fbSyncUnit(merged);
+  saveState();
+  showToast(`Merged into ${newCount} ${a._role}`, '#66bb6a');
+}
+
+function resetMap() {
+  if (!confirm('Reset map? All units, routes and drawings will be cleared.')) return;
+  // Clear Firebase for own side
+  if (_fbDb) _fbDb.ref(`units_${userSide}`).remove();
+  // Clear service worker state
+  if (navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage({ type: 'SAVE_STATE', state: { units: [], depPoints: [], savedAt: 0, _pendingEvents: [] } });
+  // Clear localStorage
+  localStorage.removeItem(SAVE_KEY);
+  localStorage.removeItem('annotations_blue');
+  localStorage.removeItem('annotations_red');
+  location.reload();
 }
 
 function saveState() {
