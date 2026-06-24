@@ -3494,8 +3494,22 @@ setInterval(() => {
   // keep range circle centred on selected unit as it moves
   updatePanelRange();
 
-  // ── TDP auto-spawn ──
+  // ── auto-merge units stacked within 5m (same side+role, both idle) ──
   const now = Date.now();
+  const merged5m = new Set();
+  for (const a of allMarkers) {
+    if (merged5m.has(a) || a._side !== userSide || movingMarkers.has(a)) continue;
+    for (const b of allMarkers) {
+      if (b === a || merged5m.has(b) || b._side !== a._side || b._role !== a._role || movingMarkers.has(b)) continue;
+      if (segMeters(markerPos(a), markerPos(b)) <= 5) {
+        merged5m.add(a); merged5m.add(b);
+        mergeUnits(a, b);
+        break;
+      }
+    }
+  }
+
+  // ── TDP auto-spawn ──
   for (const dp of deploymentPoints) {
     if (!dp._nextSpawnAt || dp._nextSpawnAt > now) continue;
     tdpSpawn(dp, now);
@@ -3989,7 +4003,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-J';
+const VERSION = '2026-06-24-K';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
