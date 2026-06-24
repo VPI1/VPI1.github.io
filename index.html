@@ -4139,7 +4139,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-S';
+const VERSION = '2026-06-24-T';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4147,6 +4147,12 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 const SAVE_KEY    = 'tactical_map_v2';
 const RESET_KEY   = 'tactical_map_reset_at'; // timestamp of last full reset — any state older than this is discarded
+
+// When another tab resets the map, the `storage` event fires here (NOT in the resetting tab itself).
+// Reload so this tab also spawns fresh and pushes its side's new units to Firebase.
+window.addEventListener('storage', (e) => {
+  if (e.key === RESET_KEY) location.reload();
+});
 const GH_KEY      = 'tactical_map_github';   // localStorage key for GitHub config
 const GH_FILE     = 'game-state.json';        // file in the repo
 const GH_BRANCH   = 'main';
