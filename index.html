@@ -359,7 +359,42 @@ const CENTER = [47.78040, 36.28230];
 const ZOOM   = 13;
 const BBOX_PAD = 0.09;
 
+// Game boundary polygon — roughly follows Haichur river (west/south) and
+// Yanchur river (east). Units cannot be routed outside this area.
+const GAME_BOUNDARY = [
+  [47.878, 36.112], // NW
+  [47.882, 36.200], // N
+  [47.876, 36.318], // N-NE
+  [47.858, 36.420], // NE
+  [47.808, 36.468], // E
+  [47.748, 36.462], // SE
+  [47.688, 36.408], // SE
+  [47.650, 36.318], // S
+  [47.645, 36.188], // SW
+  [47.668, 36.098], // W
+  [47.738, 36.078], // W
+  [47.818, 36.090], // NW
+];
+
+// Ray-casting point-in-polygon test
+function pointInBoundary(lat, lng) {
+  const poly = GAME_BOUNDARY;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i], [yj, xj] = poly[j];
+    if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi))
+      inside = !inside;
+  }
+  return inside;
+}
+
 const map = L.map('map', { zoomControl: true, doubleClickZoom: false }).setView(CENTER, ZOOM);
+
+// Draw game boundary (dashed white/grey outline, no fill)
+L.polygon(GAME_BOUNDARY, {
+  color: '#e0e0e0', weight: 2.5, opacity: 0.75,
+  fill: false, dashArray: '8 6', interactive: false
+}).addTo(map).bindTooltip('Game boundary', { sticky: true, className: 'fpv-eta-tip' });
 
 const satelliteLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
   attribution: '&copy; Google', maxZoom: 21, subdomains: '0123'
@@ -804,7 +839,8 @@ const SUPPLY_TYPES = {
 };
 
 // ── weather system ────────────────────────────────────────────
-let weatherFactor = 1.0; // multiplier applied to mavic detection probability
+let weatherFactor = 1.0;           // drone detection probability multiplier
+let groundVisibilityFactor = 1.0;  // all-unit visibility / accuracy multiplier
 let weatherData   = null;
 
 const WMO = {
@@ -828,6 +864,18 @@ function wmoFactor(code) {
   return 1.00;
 }
 
+// Ground-unit visibility factor (infantry spotting, firefight accuracy)
+function wmoGroundFactor(code) {
+  if (code === 45 || code === 48) return 0.15; // dense fog — near-zero visibility
+  if (code >= 95) return 0.45;                 // thunderstorm: rain + smoke
+  if (code >= 71 && code <= 77) return 0.55;   // snow
+  if (code >= 61 && code <= 67) return 0.65;   // heavy rain
+  if (code >= 80 && code <= 82) return 0.70;   // showers
+  if (code >= 51 && code <= 55) return 0.82;   // drizzle
+  if (code === 3) return 0.92;                 // overcast
+  return 1.00;
+}
+
 async function fetchWeather() {
   const [lat, lng] = CENTER;
   try {
@@ -843,6 +891,9 @@ async function fetchWeather() {
     if (wind > 18) f *= 0.60; // borderline flyable
     if (vis > 0 && vis < 2000) f *= vis / 2000; // low visibility cap
     weatherFactor = Math.max(0.05, Math.min(1.0, f));
+    let gf = wmoGroundFactor(code);
+    if (vis > 0 && vis < 5000) gf *= Math.max(0.10, vis / 5000);
+    groundVisibilityFactor = Math.max(0.05, Math.min(1.0, gf));
     weatherData = { code, wind, vis };
     updateWeatherWidget();
   } catch (_) {}
@@ -857,8 +908,10 @@ function updateWeatherWidget() {
   const desc = WMO[code] ?? '? Unknown';
   const visStr = vis >= 10000 ? '>10 km' : vis >= 1000 ? (vis/1000).toFixed(1)+' km' : Math.round(vis)+' m';
   const fc = weatherFactor;
-  const col = fc > 0.8 ? '#66bb6a' : fc > 0.5 ? '#ffa726' : '#ef5350';
-  el.innerHTML = `${desc} &nbsp;💨 ${wind.toFixed(0)} m/s &nbsp;👁 ${visStr} &nbsp;<span style="color:${col}">drone ${Math.round(fc*100)}%</span>`;
+  const gfc = groundVisibilityFactor;
+  const col  = fc  > 0.8 ? '#66bb6a' : fc  > 0.5 ? '#ffa726' : '#ef5350';
+  const gcol = gfc > 0.8 ? '#66bb6a' : gfc > 0.5 ? '#ffa726' : '#ef5350';
+  el.innerHTML = `${desc} &nbsp;💨 ${wind.toFixed(0)} m/s &nbsp;👁 ${visStr} &nbsp;<span style="color:${col}">drone ${Math.round(fc*100)}%</span> &nbsp;<span style="color:${gcol}">ground ${Math.round(gfc*100)}%</span>`;
 }
 
 // ── mavic patrol route ────────────────────────────────────────
@@ -885,6 +938,9 @@ function enterPatrolDraw(unit) {
 }
 
 function patrolClick(latlng) {
+  if (!pointInBoundary(latlng.lat, latlng.lng)) {
+    showToast('Outside game boundary', '#ef5350'); return;
+  }
   // Hard battery check BEFORE adding the point
   const testPoints = [...patrolPoints, [latlng.lat, latlng.lng]];
   const cost = patrolFlightCost(testPoints);
@@ -1796,8 +1852,6 @@ function _buildActTab(m, now, moving) {
       const ammoFull = m._ammo >= m._maxAmmo;
       h += _pb(`Request Ammo${ammoFull?' (full)':''}`, '◈', ammoFull?'':'tac', ammoFull?'':"_pa('supply-ammo')", ammoFull);
     }
-    const reinfLabel = m._role === 'infantry' ? 'Request Reinforcements (+4)' : `Request New ${ROLES[m._role]?.label ?? m._role} Unit`;
-    h += _pb(reinfLabel, '◈', 'tac', "_pa('supply-reinf')", false);
     if (m._role === 'fpv') {
       const dronesFull = m._drones >= (m._maxDrones ?? FPV_MAX_DRONES);
       h += _pb(`Request Drone Resupply${dronesFull?' (max)':''}`, '◈', dronesFull?'':'tac', dronesFull?'':"_pa('supply-drones')", dronesFull);
@@ -2155,8 +2209,8 @@ function fightTick(attacker, defender) {
 
   const distM = segMeters(markerPos(attacker), markerPos(defender));
   const maxRange = Math.max(unitRangeM(attacker), unitRangeM(defender), 1);
-  // accuracy 1.0 at ≤50m, falls to ~0.15 at max range
-  const accuracy = Math.max(0.15, 1 - Math.pow(distM / maxRange, 0.7) * 0.85);
+  // accuracy 1.0 at ≤50m, falls to ~0.15 at max range; fog/rain reduce further
+  const accuracy = Math.max(0.08, (1 - Math.pow(distM / maxRange, 0.7) * 0.85) * groundVisibilityFactor);
   // inconclusive chance: 15% at close range → 60% at max range
   const inconclusiveChance = 0.15 + (1 - accuracy) * 0.55;
 
@@ -3354,6 +3408,9 @@ map.on('click', (e) => {
   if (annotateMode)   { annotateClick(e.latlng); return; }
   if (patrolMode)     { patrolClick(e.latlng); return; }
   if (_placingDeployPoint) {
+    if (!pointInBoundary(e.latlng.lat, e.latlng.lng)) {
+      showToast('Outside game boundary — cannot place here', '#ef5350'); return;
+    }
     createDeploymentPoint(e.latlng, userSide, _pendingDeployRole);
     _placingDeployPoint = false;
     document.getElementById('dep-btn').classList.remove('ruler-on');
@@ -3403,6 +3460,9 @@ map.on('click', (e) => {
     // If a unit is selected and user clicks the map, start drawing its route
     if (activeMarker && activePanel) { beginDrawForSelected(e.latlng); return; }
     closePanel(); return;
+  }
+  if (!pointInBoundary(e.latlng.lat, e.latlng.lng)) {
+    showToast('Outside game boundary', '#ef5350'); return;
   }
   drawPoints.push([e.latlng.lat, e.latlng.lng]);
   if (drawLine) { drawLine.setLatLngs(drawPoints); }
@@ -3584,18 +3644,17 @@ setInterval(() => {
     }
     // ── Fog of war: enemy visibility ──
     if (m._side === userSide) {
-      // Friendly infantry spots nearby enemies (visual range ~300m, 15%/s)
+      // Friendly infantry spots nearby enemies; range and chance reduced by weather
       if (m._role === 'infantry') {
+        const visRange = 300 * groundVisibilityFactor; // fog shrinks visual range
         for (const e of allMarkers) {
           if (e._side === userSide) continue;
           const dist = segMeters(markerPos(m), markerPos(e));
-          if (dist > 300) continue;
+          if (dist > visRange) continue;
           const alreadySpotted = (e._spottedUntil ?? 0) > now;
-          // Already spotted in range → always keep spotted, no flicker
-          // New detection → terrain roll (forest 30%, urban 50%, field 100%)
-          const factor = dist <= 50 ? 1.0 : terrainVisualFactor(markerPos(e));
+          const factor = (dist <= 50 ? 1.0 : terrainVisualFactor(markerPos(e))) * groundVisibilityFactor;
           if (alreadySpotted || Math.random() < factor) {
-            e._spottedUntil = now + 3000; // 3s window avoids 1-tick gaps
+            e._spottedUntil = now + 3000;
           }
         }
       }
@@ -3670,11 +3729,13 @@ setInterval(() => {
 // ── fortification system ────────────────────────────────────
 const FORT_LABELS = ['', 'Scraped', 'Position', 'Trench', 'Reinforced', 'Bunker', 'Hardened'];
 // Per-threat protection fractions [lvl 0 … 6]
+// smallArms: levels 1-2 give big firefight protection; higher levels plateau
+// artillery/fpv: levels 1-2 provide very little; levels 3-6 scale up significantly
 const FORT_COVER = {
-  smallArms: [0, 0.10, 0.30, 0.55, 0.72, 0.88, 0.96],
-  artillery:  [0, 0.00, 0.05, 0.18, 0.35, 0.60, 0.82],
-  fpv:        [0, 0.00, 0.05, 0.15, 0.25, 0.45, 0.68],
-  detection:  [0, 0.00, 0.05, 0.15, 0.30, 0.50, 0.70],
+  smallArms: [0, 0.55, 0.72, 0.80, 0.84, 0.88, 0.92],
+  artillery:  [0, 0.00, 0.04, 0.22, 0.45, 0.65, 0.82],
+  fpv:        [0, 0.00, 0.04, 0.18, 0.32, 0.50, 0.68],
+  detection:  [0, 0.05, 0.12, 0.22, 0.38, 0.55, 0.72],
 };
 // Thresholds in game-seconds for each level (real ms = game_s * 1000 / TIME_SCALE)
 const FORT_GAME_S = [0, 30, 180, 600, 1800, 5400, 14400];
@@ -3999,7 +4060,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-24-M';
+const VERSION = '2026-06-24-N';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
