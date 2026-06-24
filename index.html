@@ -250,6 +250,21 @@
       font-size: 14px; padding: 30px; text-align: center;
     }
   </style>
+<!-- Firebase (loaded on-demand when user configures it) -->
+<script>
+function loadFirebaseSDK(cb) {
+  if (window._fbLoaded) { cb(); return; }
+  const s1 = document.createElement('script');
+  s1.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js';
+  s1.onload = () => {
+    const s2 = document.createElement('script');
+    s2.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js';
+    s2.onload = () => { window._fbLoaded = true; cb(); };
+    document.head.appendChild(s2);
+  };
+  document.head.appendChild(s1);
+}
+</script>
 </head>
 <body>
 
@@ -289,6 +304,7 @@
   <button class="tb-btn" id="map3d-btn" onclick="toggle3DMap()" title="Toggle 3D map view">3D</button>
   <button class="tb-btn" onclick="if(confirm('Reset map? All positions and routes will be lost.')) { localStorage.removeItem('tactical_map_v2'); location.reload(); }" title="Reset map">↺</button>
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
+  <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
 </div>
 <div id="annotate-toolbar">
   <button class="ann-btn" id="ann-line-btn"   onclick="setAnnotateMode('line')">— Line</button>
@@ -1240,6 +1256,7 @@ function saveAnnotations() {
     return { type: a.type, points: a.points, color: a.color, weight: a.weight };
   });
   try { localStorage.setItem('annotations_' + userSide, JSON.stringify(data)); } catch(e) {}
+  fbSyncAnnotations();
 }
 function loadAnnotations() {
   try {
@@ -3197,6 +3214,7 @@ function clearRoute(marker) {
   movingMarkers.delete(marker);
   if (marker._side === userSide) marker.dragging.enable();
   if (activePanel === marker) closePanel();
+  fbSyncUnit(marker); // broadcast final resting position
 }
 
 function assignRoute(marker, route) {
@@ -3242,6 +3260,7 @@ function assignRoute(marker, route) {
   unitLog(movingMarker, `Route assigned — ${fmtDist(totalDist)} · ${route.length-1} waypoint${route.length>2?'s':''}`);
   rebuildHandles(state);
   movingMarker.dragging.disable();
+  fbSyncUnit(movingMarker);
 }
 
 function cancelDraw() {
@@ -3734,6 +3753,7 @@ function toggle3DMap() {
 function createMarker(pt, side, count, role = '') {
   const m = L.marker(pt, { icon: soldierIcon(side, count, role), draggable: false });
   m._side = side; m._count = count; m._role = role;
+  m._uid = Math.random().toString(36).slice(2) + Date.now().toString(36);
   m._ammo = 0; m._maxAmmo = 0; m._drones = 0;
   m._fpvReadyAt = 0; m._fpvCooldownUntil = 0; m._artPending = null;
   m._suppressedUntil = 0;
@@ -3766,12 +3786,157 @@ function createMarker(pt, side, count, role = '') {
   }
   if (side === userSide) {
     m.dragging.enable();
+    m.on('dragend', () => { saveState(); fbSyncUnit(m); });
     m.on('click', (e) => { e.originalEvent?.stopPropagation(); _markerClickAt = Date.now(); selectForRoute(m); });
   }
   return m;
 }
 
 // ── state persistence ─────────────────────────────────────────
+// ── Firebase real-time multiplayer sync ───────────────────────────────────
+const FB_KEY      = 'tactical_map_firebase';
+const _fbClientId = (() => {
+  let id = localStorage.getItem('_fbClientId');
+  if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('_fbClientId', id); }
+  return id;
+})();
+let _fbDb         = null;
+let _fbApplying   = false;  // guard: don't re-broadcast changes we received
+
+function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || {}; } catch { return {}; } }
+function setFBConfig(c) { localStorage.setItem(FB_KEY, JSON.stringify(c)); }
+
+function initFirebase() {
+  const cfg = getFBConfig();
+  if (!cfg.databaseURL) return;
+  loadFirebaseSDK(() => {
+    try {
+      if (!firebase.apps.length) firebase.initializeApp(cfg);
+      _fbDb = firebase.database();
+      startFBListeners();
+      showToast('Multiplayer connected', '#66bb6a');
+    } catch(e) { console.warn('Firebase init error:', e); }
+  });
+}
+
+function startFBListeners() {
+  if (!_fbDb) return;
+
+  // ── unit routes & positions ──
+  _fbDb.ref('units').on('child_added',   snap => applyRemoteUnit(snap.val()));
+  _fbDb.ref('units').on('child_changed', snap => applyRemoteUnit(snap.val()));
+  _fbDb.ref('units').on('child_removed', snap => {
+    const d = snap.val();
+    if (!d || d.clientId === _fbClientId) return;
+    const m = allMarkers.find(mk => mk._uid === d.uid);
+    if (m) { _fbApplying = true; map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1); _fbApplying = false; }
+  });
+
+  // ── annotations ──
+  _fbDb.ref(`annotations_${userSide}`).on('value', snap => {
+    const d = snap.val();
+    if (!d || d.clientId === _fbClientId) return;
+    _fbApplying = true;
+    // Clear all layers and redraw from remote
+    for (const a of annotationLayers) {
+      map.removeLayer(a.layer);
+      if (a.head) map.removeLayer(a.head);
+    }
+    annotationLayers.length = 0;
+    if (d.items?.length) {
+      try { localStorage.setItem('annotations_' + userSide, JSON.stringify(d.items)); } catch {}
+      loadAnnotations();
+    }
+    _fbApplying = false;
+  });
+}
+
+function fbSyncUnit(m) {
+  if (!_fbDb || _fbApplying || !m._uid) return;
+  const pos   = m.getLatLng();
+  const state = movingMarkers.has(m) ? movingMarkers.get(m) : null;
+  const route = state
+    ? [[pos.lat, pos.lng], ...state.route.slice(state.seg + 1)]
+    : null;
+  _fbDb.ref(`units/${m._uid}`).set({
+    uid:           m._uid,
+    clientId:      _fbClientId,
+    lat:           pos.lat,
+    lng:           pos.lng,
+    side:          m._side,
+    role:          m._role,
+    count:         m._count,
+    remainingRoute: route,
+    updatedAt:     Date.now(),
+  });
+}
+
+function fbRemoveUnit(m) {
+  if (!_fbDb || _fbApplying || !m._uid) return;
+  _fbDb.ref(`units/${m._uid}`).set({ uid: m._uid, clientId: _fbClientId, removed: true });
+}
+
+function fbSyncAnnotations() {
+  if (!_fbDb || _fbApplying) return;
+  const data = annotationLayers.map(a => {
+    if (a.type === 'note')   return { type: 'note',   latlng: a.latlng, text: a.text, color: a.color };
+    if (a.type === 'circle') return { type: 'circle', center: a.center, radius: a.radius, color: a.color, weight: a.weight };
+    return { type: a.type, points: a.points, color: a.color, weight: a.weight };
+  });
+  _fbDb.ref(`annotations_${userSide}`).set({ clientId: _fbClientId, items: data, updatedAt: Date.now() });
+}
+
+function applyRemoteUnit(d) {
+  if (!d || d.clientId === _fbClientId) return;
+  _fbApplying = true;
+  try {
+    const existing = allMarkers.find(m => m._uid === d.uid);
+    if (d.removed) {
+      if (existing) { map.removeLayer(existing); allMarkers.splice(allMarkers.indexOf(existing), 1); }
+    } else if (existing) {
+      if (d.remainingRoute?.length >= 2) {
+        clearRoute(existing);
+        assignRoute(existing, d.remainingRoute);
+      } else {
+        clearRoute(existing);
+        existing.setLatLng([d.lat, d.lng]);
+      }
+      if (d.count !== existing._count) { existing._count = d.count; existing.setIcon(soldierIcon(existing._side, d.count, existing._role)); }
+    } else if (d.uid && d.side && d.role && d.lat != null) {
+      const m = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
+      m._uid = d.uid;
+      if (d.remainingRoute?.length >= 2) assignRoute(m, d.remainingRoute);
+    }
+  } finally { _fbApplying = false; }
+}
+
+function openFBConfig() {
+  const old = document.getElementById('fb-config-panel');
+  if (old) { old.remove(); return; }
+  const cfg = getFBConfig();
+  const panel = document.createElement('div');
+  panel.id = 'fb-config-panel';
+  panel.style.cssText = 'position:fixed;top:60px;right:16px;background:#1a1a2e;border:1px solid #444;border-radius:6px;padding:14px;font-family:monospace;font-size:11px;min-width:300px;z-index:9000;box-shadow:0 2px 14px #000c';
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <b style="color:#42a5f5">Multiplayer (Firebase)</b>
+      <span onclick="document.getElementById('fb-config-panel').remove()" style="cursor:pointer;color:#777;font-size:16px">✕</span>
+    </div>
+    <div style="color:#999;font-size:10px;margin-bottom:10px">
+      1. Create a free project at <b style="color:#eee">firebase.google.com</b><br>
+      2. Add a Realtime Database (start in test mode)<br>
+      3. Copy the config JSON from Project Settings
+    </div>
+    <label style="color:#bbb;display:block;margin-bottom:4px">Firebase config (JSON)</label>
+    <textarea id="fb-cfg-input" rows="6" style="width:100%;box-sizing:border-box;background:#111;border:1px solid #555;color:#eee;padding:6px;border-radius:3px;font-family:monospace;font-size:10px;resize:vertical">${cfg.apiKey ? JSON.stringify(cfg, null, 2) : ''}</textarea>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button onclick="(()=>{try{const c=JSON.parse(document.getElementById('fb-cfg-input').value);setFBConfig(c);initFirebase();document.getElementById('fb-config-panel').remove();}catch(e){showToast('Invalid JSON: '+e.message,'#ef5350');}})()" style="flex:1;background:#1e88e5;color:#fff;border:none;padding:5px;border-radius:3px;cursor:pointer">Connect</button>
+      <button onclick="setFBConfig({});_fbDb=null;document.getElementById('fb-config-panel').remove();showToast('Firebase disconnected','#ffa726')" style="background:#444;color:#fff;border:none;padding:5px 10px;border-radius:3px;cursor:pointer">Disconnect</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+}
+
 const SAVE_KEY    = 'tactical_map_v2';
 const GH_KEY      = 'tactical_map_github';   // localStorage key for GitHub config
 const GH_FILE     = 'game-state.json';        // file in the repo
@@ -4285,6 +4450,7 @@ async function main() {
       loadAnnotations();
       fetchWeather();
       swSend({ type: 'PAGE_OPEN' });
+      initFirebase(); // auto-connect if previously configured
       return;
     }
 
@@ -4449,6 +4615,7 @@ async function main() {
     document.getElementById('loading').style.display = 'none';
     loadAnnotations();
     fetchWeather();
+    initFirebase();
 
   } catch (err) {
     showError(`Failed to load data: ${err.message}`);
