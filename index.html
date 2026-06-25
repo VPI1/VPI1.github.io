@@ -4653,7 +4653,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-26-AB';
+const VERSION = '2026-06-26-AC';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -5425,17 +5425,15 @@ async function main() {
       return null;
     }
 
-    const BLUE_POOL = [
-      { role: 'infantry',  w: 8  },
-      { role: 'mortar',    w: 3  },
-      { role: 'mavic',     w: 9  }, { role: 'fpv',      w: 7 },
-      { role: 'artillery', w: 2  },
+    // Support pools — infantry is spawned separately in explicit quantities;
+    // FPVs are added last via ratio enforcement (1 crew per 3 infantry).
+    const BLUE_SUPPORT = [
+      { role: 'mortar', w: 4 },
+      { role: 'mavic',  w: 7 },
     ];
-    const RED_POOL = [
-      { role: 'infantry',  w: 8  },
-      { role: 'mortar',    w: 4  },
-      { role: 'mavic',     w: 10 }, { role: 'fpv',      w: 8 },
-      { role: 'artillery', w: 3  },
+    const RED_SUPPORT = [
+      { role: 'mortar', w: 5 },
+      { role: 'mavic',  w: 7 },
     ];
 
     // override pickSpotForRole to also enforce per-role separation
@@ -5469,33 +5467,51 @@ async function main() {
       }
     }
 
-    const numBlue = 16 + Math.floor(Math.random() * 4); // 16-19
-    for (let i = 0; i < numBlue; i++) {
-      const role = pickWeightedRole(BLUE_POOL);
+    // ── Blue infantry core (10-13 units) ──
+    const numBlueInf = 10 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < numBlueInf; i++) {
+      const pt = pickSpotSep(true, 'infantry');
+      if (!pt) continue;
+      markOccupied(pt, 'infantry', true);
+      createMarker(pt, 'blue', groupSize('infantry'), 'infantry');
+    }
+    // ── Blue support (mortar + mavic, 8-10 units) ──
+    const numBlueSup = 8 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < numBlueSup; i++) {
+      const role = pickWeightedRole(BLUE_SUPPORT);
       const pt = pickSpotSep(true, role);
       if (!pt) continue;
       markOccupied(pt, role, true);
       createMarker(pt, 'blue', groupSize(role), role);
     }
 
-    const numRed = 22 + Math.floor(Math.random() * 6); // 22-27
-    for (let i = 0; i < numRed; i++) {
-      const role = pickWeightedRole(RED_POOL);
+    // ── Red infantry core (14-18 units) ──
+    const numRedInf = 14 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < numRedInf; i++) {
+      const pt = pickSpotSep(false, 'infantry');
+      if (!pt) continue;
+      markOccupied(pt, 'infantry', false);
+      createMarker(pt, 'red', groupSize('infantry'), 'infantry');
+    }
+    // ── Red support (mortar + mavic, 9-12 units) ──
+    const numRedSup = 9 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < numRedSup; i++) {
+      const role = pickWeightedRole(RED_SUPPORT);
       const pt = pickSpotSep(false, role);
       if (!pt) continue;
       markOccupied(pt, role, false);
       createMarker(pt, 'red', groupSize(role), role);
     }
 
-    // Extra infantry in the close rear (1-2.5km behind the line) for both sides
-    for (let i = 0; i < 5; i++) {
+    // ── Extra infantry close to line (1-2.5 km band), 6 per side ──
+    for (let i = 0; i < 6; i++) {
       const bPt = pickBand(true,  1.0, 2.5);
       if (bPt) { markOccupied(bPt, 'infantry', true);  createMarker(bPt, 'blue', groupSize('infantry'), 'infantry'); }
       const rPt = pickBand(false, 1.0, 2.5);
       if (rPt) { markOccupied(rPt, 'infantry', false); createMarker(rPt, 'red',  groupSize('infantry'), 'infantry'); }
     }
 
-    // Enforce 1 FPV per 3 infantry per side
+    // ── FPV ratio: 1 crew per 3 infantry per side ──
     for (const northSide of [true, false]) {
       const side = northSide ? 'blue' : 'red';
       const infCount = allMarkers.filter(m => m._side === side && m._role === 'infantry').length;
