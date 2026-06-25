@@ -1159,7 +1159,8 @@ function leaveFortPosition(m) {
     .addTo(map)
     .bindTooltip(`${label} (abandoned)`, { permanent: false, direction: 'top' });
   marker.on('click', () => showFortPositionInfo(id));
-  fortPositions.push({ id, lat: pos.lat, lng: pos.lng, level: lvl, marker });
+  // builderSide: own side always sees it; enemy only sees it with recon
+  fortPositions.push({ id, lat: pos.lat, lng: pos.lng, level: lvl, marker, builderSide: m._side });
   syncFortPositionsToFirebase();
 }
 
@@ -1181,7 +1182,7 @@ function checkOccupyFortPosition(unit) {
       const label = FORT_LABELS[fp.level] || fp.level;
       unit._fortLevel = fp.level;
       unit._fortifying = false;
-      updateFortBadge(unit);
+      setTimeout(() => updateFortBadge(unit), 50); // defer so marker element is in DOM
       unitLog(unit, `Occupied abandoned ${label} position`);
       if (unit._side === userSide) showToast(`Unit occupied ${label} position`, '#ffd54f');
       map.removeLayer(fp.marker);
@@ -1194,7 +1195,7 @@ function checkOccupyFortPosition(unit) {
 
 function syncFortPositionsToFirebase() {
   if (!_fbDb) return;
-  const data = fortPositions.map(fp => ({ id: fp.id, lat: fp.lat, lng: fp.lng, level: fp.level }));
+  const data = fortPositions.map(fp => ({ id: fp.id, lat: fp.lat, lng: fp.lng, level: fp.level, builderSide: fp.builderSide }));
   _fbDb.ref('fort_positions').set(data.length ? data : null).catch(() => {});
 }
 
@@ -1210,7 +1211,17 @@ function applyFortPositionsFromFirebase(arr) {
       .bindTooltip(`${label} (abandoned)`, { permanent: false, direction: 'top' });
     const id = d.id;
     marker.on('click', () => showFortPositionInfo(id));
-    fortPositions.push({ id: d.id, lat: d.lat, lng: d.lng, level: d.level, marker });
+    fortPositions.push({ id: d.id, lat: d.lat, lng: d.lng, level: d.level, marker, builderSide: d.builderSide });
+  }
+}
+
+// Show/hide fort position markers based on fog-of-war: enemy positions only visible with recon
+function updateFortPositionVisibility() {
+  for (const fp of fortPositions) {
+    const isOwn = fp.builderSide === userSide || !fp.builderSide;
+    const visible = isOwn || canConfirmStrike(userSide, fp.lat, fp.lng);
+    const el = fp.marker.getElement();
+    if (el) el.style.visibility = visible ? 'visible' : 'hidden';
   }
 }
 
@@ -2112,6 +2123,96 @@ function _buildLogTab(m) {
   ).join('');
 }
 
+function _statusRow(icon, label, value, color) {
+  return `<div style="display:flex;align-items:baseline;gap:5px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+    <span style="font-size:11px;min-width:14px">${icon}</span>
+    <span style="color:#889;font-size:10px;flex:1">${label}</span>
+    <span style="color:${color||'#c0c8d8'};font-size:10px;font-weight:600;text-align:right">${value}</span>
+  </div>`;
+}
+
+function _buildStatusTab(m) {
+  const now = Date.now();
+  let h = '';
+
+  // ── Fortification ──────────────────────────────────────────
+  h += `<div class="psec">Position</div>`;
+  const fl = m._fortLevel ?? 0;
+  if (fl > 0) {
+    const label = FORT_LABELS[fl];
+    h += _statusRow('⬡', 'Level', `${label} (${fl}/${FORT_MAX})`, '#ffd54f');
+    h += _statusRow('🛡', 'vs Small Arms', `${Math.round((FORT_COVER.smallArms[fl]??0)*100)}% cover`, '#81c784');
+    h += _statusRow('💥', 'vs Artillery', `${Math.round((FORT_COVER.artillery[fl]??0)*100)}% cover`, '#81c784');
+    h += _statusRow('🚀', 'vs FPV', `${Math.round((FORT_COVER.fpv[fl]??0)*100)}% cover`, '#81c784');
+    h += _statusRow('👁', 'vs Detection', `${Math.round((FORT_COVER.detection[fl]??0)*100)}% hidden`, '#81c784');
+  } else if (m._fortifying) {
+    h += _statusRow('⬡', 'Digging in…', 'In progress', '#ffa726');
+  } else {
+    h += _statusRow('⬡', 'Position', 'None — in open', '#ef5350');
+  }
+
+  // ── Visibility ──────────────────────────────────────────────
+  h += `<div class="psec">Visibility</div>`;
+  const baseRange = 400;
+  const curRange = unitRangeM(m);
+  if (m._role === 'infantry' || m._role === 'mortar') {
+    if (fl >= 2) {
+      const pos = markerPos(m);
+      const hasMavic = allMarkers.some(mk => {
+        if (mk._side !== m._side || mk._role !== 'mavic') return false;
+        const mis = mk._mavicMission;
+        return mis?.phase === 'scanning' && segMeters([mis.dstLat, mis.dstLng], pos) < 400;
+      });
+      if (hasMavic) {
+        h += _statusRow('📡', 'Sight range', `${baseRange}m (Mavic cover)`, '#81c784');
+      } else {
+        h += _statusRow('👁', 'Sight range', `${curRange}m / ${baseRange}m`, '#ef5350');
+        h += _statusRow('📡', 'Mavic cover', 'None — blind in position!', '#ff7043');
+      }
+    } else {
+      h += _statusRow('👁', 'Sight range', `${curRange}m`, '#c0c8d8');
+    }
+  } else if (m._role === 'mavic') {
+    const mis = m._mavicMission;
+    if (mis?.phase === 'scanning') {
+      h += _statusRow('📡', 'Currently scanning', `${MAVIC_GND_RADIUS}m footprint`, '#81c784');
+    } else {
+      h += _statusRow('📡', 'Drone', mis ? 'In flight' : 'On ground', '#c0c8d8');
+    }
+    if (m._mavicBattery != null) h += _statusRow('🔋', 'Battery', `${Math.round(m._mavicBattery)}%`, m._mavicBattery > 25 ? '#81c784' : '#ef5350');
+  }
+  const gvPct = Math.round(groundVisibilityFactor * 100);
+  if (gvPct < 100) h += _statusRow('🌫', 'Weather vis.', `${gvPct}% (${gvPct<20?'Fog':'Reduced'})`, '#ffa726');
+
+  // ── Combat status ──────────────────────────────────────────
+  h += `<div class="psec">Combat</div>`;
+  const suppressed = (m._suppressedUntil ?? 0) > now;
+  h += _statusRow('🔇', 'Suppression', suppressed ? `Active (${Math.round((m._suppressedUntil-now)/1000)}s)` : 'None', suppressed ? '#ef5350' : '#81c784');
+  const spotted = (m._spottedUntil ?? 0) > now;
+  h += _statusRow('🔴', 'Spotted by enemy', spotted ? `Yes (${Math.round((m._spottedUntil-now)/1000)}s)` : 'No', spotted ? '#ef5350' : '#81c784');
+
+  // ── Ammo / Drones ──────────────────────────────────────────
+  if (m._role === 'fpv') {
+    h += `<div class="psec">Drones</div>`;
+    const drones = m._drones ?? 0;
+    h += _statusRow('🚀', 'FPV drones', `${drones} / ${FPV_MAX_DRONES}`, drones > 1 ? '#81c784' : '#ef5350');
+  } else if (['artillery','mortar'].includes(m._role)) {
+    h += `<div class="psec">Ammo</div>`;
+    const ammo = m._ammo ?? 0;
+    h += _statusRow('🔴', 'Rounds', `${ammo} / ${m._maxAmmo ?? 0}`, ammo > 2 ? '#81c784' : ammo > 0 ? '#ffa726' : '#ef5350');
+  }
+
+  // ── Pending recon ──────────────────────────────────────────
+  const pending = pendingStrikeConfirms.filter(e => e.logs.some(l => l.marker === m));
+  if (pending.length) {
+    h += `<div class="psec">Awaiting Recon</div>`;
+    h += _statusRow('🔎', 'Unconfirmed strikes', `${pending.length}`, '#ffa726');
+    h += `<div class="pb-note" style="color:#888;font-size:9px">Send Mavic or infantry to impact area to confirm damage</div>`;
+  }
+
+  return h || '<div class="pb-note">No active effects.</div>';
+}
+
 function renderPanel() {
   const m = activePanel;
   if (!m) return;
@@ -2126,6 +2227,7 @@ function renderPanel() {
   let content = '';
   if (tab === 'act') content = _buildActTab(m, now, moving);
   else if (tab === 'dec') content = _buildDecTab(m);
+  else if (tab === 'sts') content = _buildStatusTab(m);
   else content = _buildLogTab(m);
 
   panel.innerHTML = `
@@ -2140,6 +2242,7 @@ function renderPanel() {
     <div class="ptabs">
       <div class="ptab${tab==='act'?' on':''}" onclick="_tab('act')">Actions</div>
       <div class="ptab${tab==='dec'?' on':''}" onclick="_tab('dec')">Rules</div>
+      <div class="ptab${tab==='sts'?' on':''}" onclick="_tab('sts')">Status</div>
       <div class="ptab${tab==='log'?' on':''}" onclick="_tab('log')">Log${logCount?` (${logCount})`:''}</div>
     </div>
     <div class="pc">${content}</div>`;
@@ -3794,6 +3897,12 @@ document.addEventListener('keydown', (e) => {
 });
 
 setInterval(() => {
+  // ── fort position fog-of-war visibility ──
+  updateFortPositionVisibility();
+
+  // ── pending strike confirmations ──
+  checkPendingStrikeConfirms();
+
   // ── conditional orders ──
   processConditions();
 
@@ -4115,6 +4224,7 @@ function createMarker(pt, side, count, role = '') {
   m._side = side; m._count = count; m._role = role;
   m._uid = Math.random().toString(36).slice(2) + Date.now().toString(36);
   m._ownerClientId = _fbClientId; // track which client created this unit
+  m._provisional = (userSide && side !== userSide); // locally-spawned opposite-side units replaced when real tab connects
   m._ammo = 0; m._maxAmmo = 0; m._drones = 0;
   m._fpvReadyAt = 0; m._fpvCooldownUntil = 0; m._artPending = null;
   m._suppressedUntil = 0;
@@ -4200,12 +4310,13 @@ function startFBListeners() {
     const side = snap.ref.key.replace('units_', '');
     _fbApplying = true;
     try {
+      // hasRemoteData: another client has pushed real units for this side
+      const hasRemoteData = Object.values(all).some(d => d && d.clientId && d.clientId !== _fbClientId);
       for (const m of allMarkers.filter(mk => mk._side === side)) {
         if (!all[m._uid]) {
-          // Only remove a marker if it was created by a remote client.
-          // Never remove a unit this tab spawned based on an empty/stale snapshot —
-          // Firebase fires before fbPushAllUnits has had a chance to push.
-          if (m._ownerClientId !== _fbClientId) {
+          // Remove if owned by another client, OR if it's a provisional locally-spawned
+          // opposite-side unit that a real remote client has now replaced.
+          if (m._ownerClientId !== _fbClientId || (m._provisional && hasRemoteData)) {
             map.removeLayer(m); allMarkers.splice(allMarkers.indexOf(m), 1);
           }
         }
@@ -4456,7 +4567,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-25-Y';
+const VERSION = '2026-06-25-Z';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
