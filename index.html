@@ -723,16 +723,16 @@ function randomComposition(count) {
 }
 function aliveSoldiers(m) { return (m._soldiers || []).filter(s => s.alive); }
 // Fort-level visibility penalty for infantry dug into positions.
-// Scraped=slight reduction; trench+ = heavy tunnel-vision effect.
-// A scanning friendly Mavic within 400m compensates fully.
-const FORT_VIS_FACTOR = [1.0, 0.85, 0.50, 0.28, 0.18, 0.14, 0.10];
+// Units always retain at least a 60m floor — they're not completely blind.
+// A scanning friendly Mavic within 400m restores full range.
+const FORT_VIS_FACTOR = [1.0, 0.88, 0.58, 0.38, 0.26, 0.20, 0.16];
+const FORT_VIS_MIN_M  = 60; // absolute floor — even in a hardened bunker you see immediate surroundings
 
 function unitRangeM(m) {
   const base = 400;
   if (m._role !== 'infantry' && m._role !== 'mortar') return base;
   const fl = m._fortLevel ?? 0;
   if (fl === 0) return base;
-  // Check if a friendly scanning Mavic is within 400m — restores full visibility
   const pos = markerPos(m);
   const hasMavicCover = allMarkers.some(mk => {
     if (mk._side !== m._side || mk._role !== 'mavic') return false;
@@ -740,7 +740,20 @@ function unitRangeM(m) {
     return mis?.phase === 'scanning' && segMeters([mis.dstLat, mis.dstLng], pos) < 400;
   });
   if (hasMavicCover) return base;
-  return Math.round(base * (FORT_VIS_FACTOR[fl] ?? 0.10));
+  return Math.max(FORT_VIS_MIN_M, Math.round(base * (FORT_VIS_FACTOR[fl] ?? 0.16)));
+}
+
+// Combined detection hide % for a unit at its current position (fort + terrain)
+function unitDetectionHide(m) {
+  const fl = m._fortLevel ?? 0;
+  const fortDetCover = FORT_COVER.detection[fl] ?? 0; // fraction blocked by fort
+  const terrain = terrainAt(markerPos(m));
+  // terrain reduces base spot probability (same factors as mavicSpotProb)
+  const terrainCover = terrain === 'forest' ? 0.22 : terrain === 'urban' ? 0.48 : 1.00;
+  // Combined: effective spot = base * terrainCover * (1-fortDetCover)
+  // So effective hide = 1 - terrainCover*(1-fortDetCover)
+  const effHide = 1 - terrainCover * (1 - fortDetCover);
+  return { effHide, fortHide: fortDetCover, terrainCover, terrain };
 }
 function unitHasMG(m)        { return false; }
 function unitHasGrenadier(m) { return false; }
@@ -1952,6 +1965,15 @@ function _buildActTab(m, now, moving) {
     const supEn = findEnemiesInRange(m, unitRangeM(m)/1000).filter(e => e._spottedUntil > now);
     h += _pb(`Suppress · ${supRangeKm}${supEn.length?` · ${supEn.length} visible`:' · none visible'}`, '⊘', 'sup', "_pa('suppress')", !(m._ammo>0&&supEn.length));
     h += _pb('Area Suppress · click ground', '⊛', 'sup', "_pa('area-suppress')", m._ammo<=0);
+    // Trench clearing — shows when within 20m of a fortified enemy
+    const clearTargets = findEnemiesInRange(m, 0.020).filter(e => (e._fortLevel ?? 0) > 0);
+    if (clearTargets.length) {
+      const ct = clearTargets[0];
+      const defAware = unitRangeM(ct) >= segMeters(markerPos(ct), markerPos(m));
+      const alertLbl = defAware ? '⚠ defender aware' : '✓ defender blind';
+      h += `<div class="psec">Close Assault</div>`;
+      h += _pb(`Clear trench (${FORT_LABELS[ct._fortLevel]}) · ${alertLbl}`, '⚔', defAware?'atk':'tac', `_pa('trench-clear-${ct._uid}')`, m._ammo <= 0);
+    }
     h += `<div class="psec">Tactics</div>`;
     h += _pb('Bounding Overwatch', '⇌', 'tac', "_pa('bounding')", m._ammo<=0);
     const holdOn = m._conds?.holdPos;
@@ -2144,7 +2166,10 @@ function _buildStatusTab(m) {
     h += _statusRow('🛡', 'vs Small Arms', `${Math.round((FORT_COVER.smallArms[fl]??0)*100)}% cover`, '#81c784');
     h += _statusRow('💥', 'vs Artillery', `${Math.round((FORT_COVER.artillery[fl]??0)*100)}% cover`, '#81c784');
     h += _statusRow('🚀', 'vs FPV', `${Math.round((FORT_COVER.fpv[fl]??0)*100)}% cover`, '#81c784');
-    h += _statusRow('👁', 'vs Detection', `${Math.round((FORT_COVER.detection[fl]??0)*100)}% hidden`, '#81c784');
+    { const det = unitDetectionHide(m);
+      const terrLbl = det.terrain === 'forest' ? 'Forest' : det.terrain === 'urban' ? 'Urban' : 'Open';
+      const terrBonus = det.terrain !== 'open' ? ` + ${terrLbl} (+${Math.round((1-det.terrainCover)*100)}%)` : '';
+      h += _statusRow('👁', 'vs Detection', `${Math.round(det.effHide*100)}% hidden${terrBonus}`, '#81c784'); }
   } else if (m._fortifying) {
     h += _statusRow('⬡', 'Digging in…', 'In progress', '#ffa726');
   } else {
@@ -2188,8 +2213,6 @@ function _buildStatusTab(m) {
   h += `<div class="psec">Combat</div>`;
   const suppressed = (m._suppressedUntil ?? 0) > now;
   h += _statusRow('🔇', 'Suppression', suppressed ? `Active (${Math.round((m._suppressedUntil-now)/1000)}s)` : 'None', suppressed ? '#ef5350' : '#81c784');
-  const spotted = (m._spottedUntil ?? 0) > now;
-  h += _statusRow('🔴', 'Spotted by enemy', spotted ? `Yes (${Math.round((m._spottedUntil-now)/1000)}s)` : 'No', spotted ? '#ef5350' : '#81c784');
 
   // ── Ammo / Drones ──────────────────────────────────────────
   if (m._role === 'fpv') {
@@ -2317,6 +2340,7 @@ window._pa = function(action) {
     else m._selectedSoldierIds.add(id);
     renderPanel();
   }
+  else if (action.startsWith('trench-clear-')) { cancelDraw(); executeTrenchClear(m, action.slice(13)); }
   else if (action === 'bounding')    { cancelDraw(); enterBoundingOverwatch(m); }
   else if (action === 'hold-toggle') {
     if (!m._conds) m._conds = {};
@@ -2619,6 +2643,71 @@ function doInfantryAttack(attacker) {
 // Bounding overwatch: unit A suppresses while unit B advances, then swap
 
 let boundingState = null; // { suppressor, step:'pick-mover'|'pick-dest' }
+
+function executeTrenchClear(attacker, targetUid) {
+  const target = allMarkers.find(m => m._uid === targetUid);
+  if (!target || (target._fortLevel ?? 0) === 0) {
+    showToast('Target no longer in fortified position', '#888'); return;
+  }
+  const distM = segMeters(markerPos(attacker), markerPos(target));
+  if (distM > 25) { showToast('Too far — move within 20m of the position first', '#ef5350'); return; }
+
+  // Defender awareness: their effective sight range vs distance to attacker
+  const defRange   = unitRangeM(target);
+  const defAware   = defRange >= distM;
+  // Defender's side mavic covering the area?
+  const defHasMav  = allMarkers.some(mk => {
+    if (mk._side !== target._side || mk._role !== 'mavic') return false;
+    const mis = mk._mavicMission;
+    return mis?.phase === 'scanning' && segMeters([mis.dstLat, mis.dstLng], markerPos(target)) < 400;
+  });
+  const fullyAware = defAware || defHasMav;
+
+  showExplosion(target.getLatLng(), 40);
+  showExplosion(attacker.getLatLng(), 20);
+
+  // Success chance: high if defender blind, much lower if aware
+  const successChance = fullyAware ? 0.38 : 0.74;
+  const success = Math.random() < successChance;
+
+  if (success) {
+    // Attacker wins — heavy casualties on defender, light on attacker
+    const defCas  = 1 + Math.floor(Math.random() * (fullyAware ? 2 : 3)) + (fullyAware ? 0 : 1);
+    const atkCas  = fullyAware ? 1 + Math.floor(Math.random() * 2) : Math.random() < 0.35 ? 1 : 0;
+    const defDest = damageUnit(target, defCas);
+    if (atkCas > 0) damageUnit(attacker, atkCas);
+    // Degrade fort by 2 levels (violent structural damage)
+    target._fortLevel = Math.max(0, (target._fortLevel ?? 0) - 2);
+    target._fortDamage = 0;
+    updateFortBadge(target);
+    const note = fullyAware ? ' (contested)' : ' (surprise)';
+    unitLog(attacker, `Trench cleared${note} — defender −${defCas}${defDest?' · DESTROYED':''}${atkCas>0?`, we −${atkCas}`:''}`);
+    unitLog(target,   `Position overrun — −${defCas}${defDest?' · DESTROYED':''} · fort degraded`);
+    showToast(`Trench cleared! ${defDest?'Enemy destroyed':'Enemy heavily damaged'}`, '#81c784');
+  } else {
+    // Attacker repelled — heavier attacker casualties
+    const atkCas = 1 + Math.floor(Math.random() * 3);
+    const defCas = Math.random() < 0.5 ? 1 : 0;
+    const atkDest = damageUnit(attacker, atkCas);
+    if (defCas) damageUnit(target, defCas);
+    unitLog(attacker, `Assault repelled — we −${atkCas}${atkDest?' · DESTROYED':''}${defCas?`, defender −${defCas}`:''}`);
+    unitLog(target,   `Assault repelled — attackers suffered −${atkCas}${defCas?`, we −${defCas}`:''}`);
+    showToast('Assault repelled — unit took casualties', '#ef5350');
+  }
+
+  if (_fbDb) {
+    fbSyncUnit(attacker);
+    if (allMarkers.includes(target)) { // target might be another side — push directly
+      const pos = target.getLatLng();
+      _fbDb.ref(`units_${target._side}/${target._uid}`).set({
+        uid: target._uid, lat: pos.lat, lng: pos.lng, side: target._side,
+        role: target._role, count: target._count, remainingRoute: null,
+        updatedAt: Date.now(), clientId: _fbClientId,
+      }).catch(() => {});
+    }
+  }
+  saveState(); renderPanel();
+}
 
 function enterBoundingOverwatch(suppressor) {
   if (activeFights.has(suppressor)) { showToast('Already in a firefight.', '#888'); return; }
@@ -4567,7 +4656,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-25-Z';
+const VERSION = '2026-06-26-AA';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
