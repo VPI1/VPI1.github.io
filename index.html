@@ -298,6 +298,7 @@ function loadFirebaseSDK(cb) {
   <button class="tb-btn" onclick="resetMap()" title="Reset map">↺</button>
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
   <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
+  <button class="tb-btn" id="adm-btn" onclick="openAdminPanel()" title="Admin panel">⚙</button>
 </div>
 <div id="annotate-toolbar">
   <button class="ann-btn" id="ann-line-btn"   onclick="setAnnotateMode('line')">— Line</button>
@@ -3482,6 +3483,7 @@ function beginDrawForSelected(firstLatlng) {
 }
 
 map.on('click', (e) => {
+  if (_adminPlacing)  { _adminPlaceUnit(e.latlng); return; }
   if (rulerMode)      { rulerClick(e.latlng); return; }
   if (searchAreaMode) { searchAreaClick(e.latlng); return; }
   if (annotateMode)   { annotateClick(e.latlng); return; }
@@ -4126,6 +4128,122 @@ function applyRemoteUnit(d) {
   } finally { _fbApplying = false; }
 }
 
+// ── Admin Panel ──────────────────────────────────────────────────────────────
+const ADMIN_PASSWORD = '6PuaV6X4';
+let _adminAuthed  = false;
+let _adminPlacing = false;
+
+function openAdminPanel() {
+  if (!_adminAuthed) {
+    const pw = prompt('Admin password:');
+    if (pw === null) return;
+    if (pw !== ADMIN_PASSWORD) { showToast('Wrong password', '#ef5350'); return; }
+    _adminAuthed = true;
+  }
+  const existing = document.getElementById('admin-panel');
+  if (existing) { existing.remove(); _adminStopPlacing(); return; }
+  _renderAdminPanel();
+}
+
+function _adminStopPlacing() {
+  _adminPlacing = false;
+  map.getContainer().style.cursor = '';
+  const btn = document.getElementById('adm-place-btn');
+  if (btn) { btn.textContent = '+ Place unit on map'; btn.style.background = '#1a237e'; }
+}
+
+function _renderAdminPanel() {
+  const old = document.getElementById('admin-panel');
+  if (old) old.remove();
+  const panel = document.createElement('div');
+  panel.id = 'admin-panel';
+  panel.style.cssText = 'position:fixed;top:60px;left:14px;background:#12122a;border:1px solid #555;border-radius:8px;padding:14px;font-family:monospace;font-size:11px;width:260px;max-height:80vh;overflow-y:auto;z-index:9500;box-shadow:0 2px 18px #000d';
+  const roleOpts = Object.entries(ROLES).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <b style="color:#ffd54f">⚙ Admin</b>
+      <span onclick="document.getElementById('admin-panel').remove();_adminStopPlacing();" style="cursor:pointer;color:#777;font-size:16px">✕</span>
+    </div>
+    <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #2a2a4a">
+      <div style="color:#aaa;margin-bottom:5px;font-size:10px;text-transform:uppercase;letter-spacing:.5px">Place unit</div>
+      <div style="display:flex;gap:5px;margin-bottom:5px">
+        <select id="adm-side" style="flex:1;background:#1e1e3a;color:#eee;border:1px solid #444;border-radius:3px;padding:3px 4px;font-size:11px">
+          <option value="blue">Blue</option><option value="red">Red</option>
+        </select>
+        <select id="adm-role" style="flex:2;background:#1e1e3a;color:#eee;border:1px solid #444;border-radius:3px;padding:3px 4px;font-size:11px">${roleOpts}</select>
+        <input id="adm-count" type="number" min="1" max="9" value="3" style="width:38px;background:#1e1e3a;color:#eee;border:1px solid #444;border-radius:3px;padding:3px 4px;font-size:11px;text-align:center">
+      </div>
+      <button id="adm-place-btn" onclick="adminTogglePlacing()" style="width:100%;background:#1a237e;color:#eee;border:1px solid #3949ab;border-radius:4px;padding:5px;cursor:pointer;font-size:11px">+ Place unit on map</button>
+    </div>
+    <div style="color:#aaa;margin-bottom:5px;font-size:10px;text-transform:uppercase;letter-spacing:.5px">All units (<span id="adm-unit-count">0</span>)</div>
+    <div id="adm-unit-list"></div>`;
+  document.body.appendChild(panel);
+  _renderAdminUnitList();
+  document.getElementById('adm-btn').classList.add('active');
+}
+
+function adminTogglePlacing() {
+  _adminPlacing = !_adminPlacing;
+  map.getContainer().style.cursor = _adminPlacing ? 'crosshair' : '';
+  const btn = document.getElementById('adm-place-btn');
+  if (btn) {
+    btn.textContent = _adminPlacing ? '🖱 Click map to place — click here to stop' : '+ Place unit on map';
+    btn.style.background = _adminPlacing ? '#1b5e20' : '#1a237e';
+    btn.style.borderColor = _adminPlacing ? '#388e3c' : '#3949ab';
+  }
+}
+
+function _renderAdminUnitList() {
+  const el = document.getElementById('adm-unit-list');
+  const cnt = document.getElementById('adm-unit-count');
+  if (!el) return;
+  if (cnt) cnt.textContent = allMarkers.length;
+  if (!allMarkers.length) { el.innerHTML = '<div style="color:#444;padding:4px 0">No units on map</div>'; return; }
+  const sorted = [...allMarkers].sort((a,b) => a._side.localeCompare(b._side) || a._role.localeCompare(b._role));
+  el.innerHTML = sorted.map(m => {
+    const col = m._side === 'blue' ? '#42a5f5' : '#ef5350';
+    const pos = m.getLatLng();
+    return `<div style="display:flex;align-items:center;gap:3px;padding:3px 0;border-bottom:1px solid #1e1e3a">
+      <span style="color:${col};font-weight:700;min-width:14px">${m._side[0].toUpperCase()}</span>
+      <span style="color:#ccc;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ROLES[m._role]?.label??m._role} ×${m._count}</span>
+      <span style="color:#444;font-size:9px;white-space:nowrap">${pos.lat.toFixed(2)},${pos.lng.toFixed(2)}</span>
+      <button onclick="adminRemoveUnit('${m._uid}')" style="background:#b71c1c;color:#fff;border:none;border-radius:3px;padding:1px 5px;cursor:pointer;font-size:10px;flex-shrink:0">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function adminRemoveUnit(uid) {
+  const m = allMarkers.find(x => x._uid === uid);
+  if (!m) return;
+  clearRoute(m);
+  if (_fbDb) _fbDb.ref(`units_${m._side}/${uid}`).remove();
+  map.removeLayer(m);
+  allMarkers.splice(allMarkers.indexOf(m), 1);
+  movingMarkers.delete(m);
+  saveState();
+  _renderAdminUnitList();
+}
+
+function _adminPlaceUnit(latlng) {
+  if (!pointInBoundary(latlng.lat, latlng.lng)) { showToast('Outside game boundary', '#ef5350'); return; }
+  const side  = document.getElementById('adm-side')?.value  || 'blue';
+  const role  = document.getElementById('adm-role')?.value  || 'infantry';
+  const count = Math.max(1, Math.min(9, parseInt(document.getElementById('adm-count')?.value || '3')));
+  const m = createMarker([latlng.lat, latlng.lng], side, count, role);
+  // Push to Firebase regardless of which side — admin bypasses the userSide guard
+  if (_fbDb) {
+    const pos = m.getLatLng();
+    _fbDb.ref(`units_${side}/${m._uid}`).set({
+      uid: m._uid, lat: pos.lat, lng: pos.lng,
+      side, role, count, remainingRoute: null,
+      updatedAt: Date.now(), clientId: _fbClientId,
+    }).catch(() => {});
+  }
+  saveState();
+  _renderAdminUnitList();
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function openFBConfig() {
   const old = document.getElementById('fb-config-panel');
   if (old) { old.remove(); return; }
@@ -4153,7 +4271,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-25-V';
+const VERSION = '2026-06-25-W';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
