@@ -118,13 +118,13 @@
     .p-bar-fill { height:2px; border-radius:2px; transition:width .4s; }
     /* tabs */
     .ptabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.05); flex-shrink:0; }
-    .ptab { flex:1; padding:9px 0; text-align:center; font-size:9px; letter-spacing:1.3px; text-transform:uppercase; color:#2e3a4a; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s,border-color .15s; }
-    .ptab:hover { color:#556070; }
-    .ptab.on { color:#82b4f0; border-bottom-color:#42a5f5; }
+    .ptab { flex:1; padding:9px 0; text-align:center; font-size:10px; letter-spacing:1.3px; text-transform:uppercase; color:#5a7898; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s,border-color .15s; font-weight:600; }
+    .ptab:hover { color:#8aaccc; }
+    .ptab.on { color:#90caf9; border-bottom-color:#42a5f5; }
     /* content */
     .pc { flex:1; overflow-y:auto; padding:11px 15px 16px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.07) transparent; }
     /* section label */
-    .psec { font-size:9px; letter-spacing:1.1px; text-transform:uppercase; color:#5a7898; font-weight:600; margin:12px 0 5px; }
+    .psec { font-size:9px; letter-spacing:1.1px; text-transform:uppercase; color:#7aaccc; font-weight:700; margin:12px 0 5px; }
     .psec:first-child { margin-top:0; }
     /* fortification indicator on marker */
     .fort-badge { position:absolute; top:-7px; right:-4px;
@@ -722,7 +722,26 @@ function randomComposition(count) {
   return soldiers;
 }
 function aliveSoldiers(m) { return (m._soldiers || []).filter(s => s.alive); }
-function unitRangeM(m) { return 400; }
+// Fort-level visibility penalty for infantry dug into positions.
+// Scraped=slight reduction; trench+ = heavy tunnel-vision effect.
+// A scanning friendly Mavic within 400m compensates fully.
+const FORT_VIS_FACTOR = [1.0, 0.85, 0.50, 0.28, 0.18, 0.14, 0.10];
+
+function unitRangeM(m) {
+  const base = 400;
+  if (m._role !== 'infantry' && m._role !== 'mortar') return base;
+  const fl = m._fortLevel ?? 0;
+  if (fl === 0) return base;
+  // Check if a friendly scanning Mavic is within 400m — restores full visibility
+  const pos = markerPos(m);
+  const hasMavicCover = allMarkers.some(mk => {
+    if (mk._side !== m._side || mk._role !== 'mavic') return false;
+    const mis = mk._mavicMission;
+    return mis?.phase === 'scanning' && segMeters([mis.dstLat, mis.dstLng], pos) < 400;
+  });
+  if (hasMavicCover) return base;
+  return Math.round(base * (FORT_VIS_FACTOR[fl] ?? 0.10));
+}
 function unitHasMG(m)        { return false; }
 function unitHasGrenadier(m) { return false; }
 
@@ -1101,27 +1120,44 @@ const allMarkers = [];
 // Each entry: { id, lat, lng, level, marker (Leaflet) }
 const fortPositions = [];
 
+// Human-readable names for abandoned position tooltips
+const FORT_ABANDON_LABELS = ['', 'Scraped position', 'Fighting position', 'Trench', 'Reinforced trench', 'Bunker', 'Hardened bunker'];
+
+// Visual style per level: bg, border, symbol
+const FORT_POS_STYLE = [
+  null,
+  { bg:'rgba(160,120,80,0.55)',  border:'#bcaaa4', sym:'S' }, // 1 Scraped
+  { bg:'rgba(121,85,72,0.75)',   border:'#8d6e63', sym:'P' }, // 2 Position
+  { bg:'rgba(93,64,55,0.88)',    border:'#6d4c41', sym:'T' }, // 3 Trench
+  { bg:'rgba(74,49,39,0.92)',    border:'#4e342e', sym:'R', thick:true }, // 4 Reinforced
+  { bg:'rgba(44,28,18,0.97)',    border:'#3e2723', sym:'B', thick:true }, // 5 Bunker
+  { bg:'rgba(20,10,5,1.0)',      border:'#d32f2f', sym:'H', thick:true }, // 6 Hardened
+];
+
+function _fortPosIcon(lvl) {
+  const s = FORT_POS_STYLE[lvl] || FORT_POS_STYLE[1];
+  const bw = s.thick ? '3px' : '2px';
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:26px;height:26px;border-radius:4px;
+      background:${s.bg};border:${bw} solid ${s.border};
+      display:flex;align-items:center;justify-content:center;
+      font-size:10px;font-weight:800;color:#e8d5c4;
+      box-shadow:0 1px 5px #000b;cursor:pointer;letter-spacing:.5px;
+    ">${s.sym}${lvl}</div>`,
+    iconSize: [26, 26], iconAnchor: [13, 13],
+  });
+}
+
 function leaveFortPosition(m) {
   const pos = m.getLatLng();
   const id  = 'fp_' + Math.random().toString(36).slice(2);
   const lvl = m._fortLevel;
-  const label = FORT_LABELS[lvl] || lvl;
-  const icon = L.divIcon({
-    className: '',
-    html: `<div title="${label} (abandoned)" style="
-      width:28px;height:28px;border-radius:50%;
-      background:rgba(139,90,43,0.85);
-      border:2px solid #8d6e63;
-      display:flex;align-items:center;justify-content:center;
-      font-size:10px;font-weight:700;color:#fff;
-      box-shadow:0 1px 4px #000a;
-      cursor:pointer;
-    ">⬡${lvl}</div>`,
-    iconSize: [28, 28], iconAnchor: [14, 14],
-  });
-  const marker = L.marker([pos.lat, pos.lng], { icon, interactive: true, zIndexOffset: -100 })
+  const label = FORT_ABANDON_LABELS[lvl] || FORT_LABELS[lvl];
+  const marker = L.marker([pos.lat, pos.lng], { icon: _fortPosIcon(lvl), interactive: true, zIndexOffset: -100 })
     .addTo(map)
-    .bindTooltip(`Abandoned ${label} position`, { permanent: false, direction: 'top' });
+    .bindTooltip(`${label} (abandoned)`, { permanent: false, direction: 'top' });
   marker.on('click', () => showFortPositionInfo(id));
   fortPositions.push({ id, lat: pos.lat, lng: pos.lng, level: lvl, marker });
   syncFortPositionsToFirebase();
@@ -1163,29 +1199,15 @@ function syncFortPositionsToFirebase() {
 }
 
 function applyFortPositionsFromFirebase(arr) {
-  // Remove all existing fort position markers
   for (const fp of fortPositions) map.removeLayer(fp.marker);
   fortPositions.length = 0;
   if (!arr?.length) return;
   for (const d of arr) {
     if (!d.id || !d.lat || !d.lng || !d.level) continue;
-    const label = FORT_LABELS[d.level] || d.level;
-    const icon = L.divIcon({
-      className: '',
-      html: `<div title="${label} (abandoned)" style="
-        width:28px;height:28px;border-radius:50%;
-        background:rgba(139,90,43,0.85);
-        border:2px solid #8d6e63;
-        display:flex;align-items:center;justify-content:center;
-        font-size:10px;font-weight:700;color:#fff;
-        box-shadow:0 1px 4px #000a;
-        cursor:pointer;
-      ">⬡${d.level}</div>`,
-      iconSize: [28, 28], iconAnchor: [14, 14],
-    });
-    const marker = L.marker([d.lat, d.lng], { icon, interactive: true, zIndexOffset: -100 })
+    const label = FORT_ABANDON_LABELS[d.level] || FORT_LABELS[d.level];
+    const marker = L.marker([d.lat, d.lng], { icon: _fortPosIcon(d.level), interactive: true, zIndexOffset: -100 })
       .addTo(map)
-      .bindTooltip(`Abandoned ${label} position`, { permanent: false, direction: 'top' });
+      .bindTooltip(`${label} (abandoned)`, { permanent: false, direction: 'top' });
     const id = d.id;
     marker.on('click', () => showFortPositionInfo(id));
     fortPositions.push({ id: d.id, lat: d.lat, lng: d.lng, level: d.level, marker });
@@ -2865,6 +2887,57 @@ function processConditions() {
   }
 }
 
+// ── Strike confirmation system ────────────────────────────────
+// Damage results are only revealed if a friendly Mavic is scanning within 400m
+// of the impact, or a friendly infantry unit is within 200m.
+// Otherwise the result is queued and revealed when recon reaches the area.
+const pendingStrikeConfirms = [];
+
+function canConfirmStrike(side, lat, lng) {
+  const pt = [lat, lng];
+  for (const mk of allMarkers) {
+    if (mk._side !== side) continue;
+    if (mk._role === 'mavic') {
+      const mis = mk._mavicMission;
+      if (mis?.phase === 'scanning' && segMeters([mis.dstLat, mis.dstLng], pt) < 400) return true;
+    }
+    if (mk._role === 'infantry' && segMeters(markerPos(mk), pt) < 200) return true;
+  }
+  return false;
+}
+
+// Deliver a confirmed strike result: log messages and optional toast
+function _deliverStrikeResult(entry) {
+  for (const { marker, text } of entry.logs) {
+    if (allMarkers.includes(marker)) unitLog(marker, text);
+  }
+  if (entry.side === userSide && entry.toast) showToast(entry.toast, '#ffa726');
+  if (activePanel && allMarkers.includes(activePanel)) renderPanel();
+}
+
+// Queue result if no recon available; deliver immediately otherwise
+function confirmOrQueue(side, lat, lng, logs, toast) {
+  if (canConfirmStrike(side, lat, lng)) {
+    _deliverStrikeResult({ side, lat, lng, logs, toast });
+  } else {
+    pendingStrikeConfirms.push({ side, lat, lng, logs, toast, expiresAt: Date.now() + 120000 });
+    if (side === userSide) showToast('Strike fired — send Mavic or infantry near impact for damage assessment', '#888');
+  }
+}
+
+// Called from game tick and Mavic scan loop to flush confirmed strikes
+function checkPendingStrikeConfirms() {
+  const now = Date.now();
+  for (let i = pendingStrikeConfirms.length - 1; i >= 0; i--) {
+    const e = pendingStrikeConfirms[i];
+    if (now > e.expiresAt) { pendingStrikeConfirms.splice(i, 1); continue; }
+    if (canConfirmStrike(e.side, e.lat, e.lng)) {
+      _deliverStrikeResult(e);
+      pendingStrikeConfirms.splice(i, 1);
+    }
+  }
+}
+
 // ── FPV drone ─────────────────────────────────────────────────
 const flyingFPVs = []; // { droneMarker, pilot, target, lat, lng, dstLat, dstLng }
 const flyingShells = []; // { marker, lat, lng, dstLat, dstLng, speed, unit, pending }
@@ -2998,8 +3071,12 @@ function applyFPVImpact(pilot, target, intercepted) {
   const extra = Math.random() < 0.2 ? 1 : 0;
   const total = cas + extra;
   const destroyed = damageUnit(target, total);
-  unitLog(pilot, `FPV direct hit on ${ROLES[target._role]?.label ?? 'unit'} — −${total} casualties${destroyed?' · DESTROYED':''}`);
+  // Damage result visible only if recon is covering the area
   unitLog(target, `Hit by FPV drone — −${total} casualties${destroyed?' · DESTROYED':''}`);
+  const pilotRef = pilot; const rText = `FPV direct hit on ${ROLES[target._role]?.label ?? 'unit'} — −${total} casualties${destroyed?' · DESTROYED':''}`;
+  confirmOrQueue(pilot._side, impactPos[0], impactPos[1],
+    [{ marker: pilotRef, text: rText }],
+    `FPV confirmed: ${rText}`);
   if (allMarkers.includes(pilot)) renderPanel();
 }
 
@@ -3228,13 +3305,17 @@ function applyArtilleryImpact(unit, pending) {
     }
   });
   const total = hits + destroyed;
-  if (total === 0) {
-    unitLog(unit, `${label} — miss · no casualties`);
-  } else {
-    const hitDesc = [...allMarkers].filter(m => segMeters(markerPos(m), impactPt) <= finalR)
-      .map(m => ROLES[m._role]?.label ?? m._role).join(', ');
-    unitLog(unit, `${label} — HIT · ${total} casualt${total===1?'y':'ies'}${destroyed?` · ${destroyed} destroyed`:''} · ${hitDesc}`);
-  }
+  const resultText = total === 0
+    ? `${label} — miss · no casualties`
+    : (() => {
+        const hitDesc = [...allMarkers].filter(m => segMeters(markerPos(m), impactPt) <= finalR)
+          .map(m => ROLES[m._role]?.label ?? m._role).join(', ');
+        return `${label} — HIT · ${total} casualt${total===1?'y':'ies'}${destroyed?` · ${destroyed} destroyed`:''} · ${hitDesc}`;
+      })();
+  // Result only confirmed with recon on the impact area
+  confirmOrQueue(unit._side, impactPt[0], impactPt[1],
+    [{ marker: unit, text: resultText }],
+    resultText);
   if (activePanel && allMarkers.includes(activePanel)) renderPanel();
   if (unit._taskQueue?.length > 0 && unit._ammo > 0) {
     const next = unit._taskQueue.shift();
@@ -3309,6 +3390,7 @@ setInterval(() => {
           }
         }
       });
+      checkPendingStrikeConfirms();
       if (now_m >= mis.scanEndsAt) {
         if (mis.scanCircle) { map.removeLayer(mis.scanCircle); mis.scanCircle = null; }
         // Patrol: advance to next waypoint if available
@@ -4374,7 +4456,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-25-X';
+const VERSION = '2026-06-25-Y';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4511,6 +4593,9 @@ function tdpSpawn(dp, now) {
 }
 
 function mergeUnits(a, b) {
+  if (['artillery','mavic','fpv'].includes(a._role)) {
+    showToast(`${ROLES[a._role]?.label ?? a._role} crews cannot merge — specialised units`, '#ef5350'); return;
+  }
   const newCount = a._count + b._count;
   const keepPos  = markerPos(a);
   // Remove both, create merged unit
@@ -5173,6 +5258,14 @@ async function main() {
       }
       // fallback: relax role separation
       return pickSpotForRole(northSide, role);
+    }
+
+    // Guarantee at least 2 artillery per side before random pool
+    for (let i = 0; i < 2; i++) {
+      for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
+        const pt = pickSpotSep(northSide, 'artillery');
+        if (pt) { markOccupied(pt, 'artillery', northSide); createMarker(pt, side, groupSize('artillery'), 'artillery'); }
+      }
     }
 
     const numBlue = 16 + Math.floor(Math.random() * 4); // 16-19
