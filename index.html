@@ -1097,6 +1097,101 @@ let pendingSplitCount = null;
 let activePanel = null;
 const allMarkers = [];
 
+// ── abandoned fortification positions ────────────────────────
+// Each entry: { id, lat, lng, level, marker (Leaflet) }
+const fortPositions = [];
+
+function leaveFortPosition(m) {
+  const pos = m.getLatLng();
+  const id  = 'fp_' + Math.random().toString(36).slice(2);
+  const lvl = m._fortLevel;
+  const label = FORT_LABELS[lvl] || lvl;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div title="${label} (abandoned)" style="
+      width:28px;height:28px;border-radius:50%;
+      background:rgba(139,90,43,0.85);
+      border:2px solid #8d6e63;
+      display:flex;align-items:center;justify-content:center;
+      font-size:10px;font-weight:700;color:#fff;
+      box-shadow:0 1px 4px #000a;
+      cursor:pointer;
+    ">⬡${lvl}</div>`,
+    iconSize: [28, 28], iconAnchor: [14, 14],
+  });
+  const marker = L.marker([pos.lat, pos.lng], { icon, interactive: true, zIndexOffset: -100 })
+    .addTo(map)
+    .bindTooltip(`Abandoned ${label} position`, { permanent: false, direction: 'top' });
+  marker.on('click', () => showFortPositionInfo(id));
+  fortPositions.push({ id, lat: pos.lat, lng: pos.lng, level: lvl, marker });
+  syncFortPositionsToFirebase();
+}
+
+function showFortPositionInfo(id) {
+  const fp = fortPositions.find(f => f.id === id);
+  if (!fp) return;
+  const label = FORT_LABELS[fp.level] || fp.level;
+  showToast(`Abandoned position: ${label} — unit arriving here will occupy it`, '#8d6e63');
+}
+
+function checkOccupyFortPosition(unit) {
+  const pos = unit.getLatLng();
+  const OCCUPY_M = 80; // metres
+  for (let i = fortPositions.length - 1; i >= 0; i--) {
+    const fp = fortPositions[i];
+    const dLat = (pos.lat - fp.lat) * 111320;
+    const dLng = (pos.lng - fp.lng) * 111320 * Math.cos(fp.lat * Math.PI / 180);
+    if (Math.sqrt(dLat*dLat + dLng*dLng) < OCCUPY_M) {
+      const label = FORT_LABELS[fp.level] || fp.level;
+      unit._fortLevel = fp.level;
+      unit._fortifying = false;
+      updateFortBadge(unit);
+      unitLog(unit, `Occupied abandoned ${label} position`);
+      if (unit._side === userSide) showToast(`Unit occupied ${label} position`, '#ffd54f');
+      map.removeLayer(fp.marker);
+      fortPositions.splice(i, 1);
+      syncFortPositionsToFirebase();
+      break;
+    }
+  }
+}
+
+function syncFortPositionsToFirebase() {
+  if (!_fbDb) return;
+  const data = fortPositions.map(fp => ({ id: fp.id, lat: fp.lat, lng: fp.lng, level: fp.level }));
+  _fbDb.ref('fort_positions').set(data.length ? data : null).catch(() => {});
+}
+
+function applyFortPositionsFromFirebase(arr) {
+  // Remove all existing fort position markers
+  for (const fp of fortPositions) map.removeLayer(fp.marker);
+  fortPositions.length = 0;
+  if (!arr?.length) return;
+  for (const d of arr) {
+    if (!d.id || !d.lat || !d.lng || !d.level) continue;
+    const label = FORT_LABELS[d.level] || d.level;
+    const icon = L.divIcon({
+      className: '',
+      html: `<div title="${label} (abandoned)" style="
+        width:28px;height:28px;border-radius:50%;
+        background:rgba(139,90,43,0.85);
+        border:2px solid #8d6e63;
+        display:flex;align-items:center;justify-content:center;
+        font-size:10px;font-weight:700;color:#fff;
+        box-shadow:0 1px 4px #000a;
+        cursor:pointer;
+      ">⬡${d.level}</div>`,
+      iconSize: [28, 28], iconAnchor: [14, 14],
+    });
+    const marker = L.marker([d.lat, d.lng], { icon, interactive: true, zIndexOffset: -100 })
+      .addTo(map)
+      .bindTooltip(`Abandoned ${label} position`, { permanent: false, direction: 'top' });
+    const id = d.id;
+    marker.on('click', () => showFortPositionInfo(id));
+    fortPositions.push({ id: d.id, lat: d.lat, lng: d.lng, level: d.level, marker });
+  }
+}
+
 // ── fog of war ────────────────────────────────────────────────
 const ghostMarkers = new Map(); // real marker → ghost L.marker
 
@@ -3388,11 +3483,12 @@ function clearRoute(marker) {
 }
 
 function assignRoute(marker, route) {
-  // Leaving a fortified position resets fortification
+  // Leaving a fortified position — leave a persistent marker at the old location
   if ((marker._fortLevel ?? 0) > 0 || marker._fortifying) {
+    if ((marker._fortLevel ?? 0) > 0) leaveFortPosition(marker);
     marker._fortLevel = 0; marker._fortifying = false; marker._fortStartAt = 0;
     updateFortBadge(marker);
-    unitLog(marker, 'Abandoned fortified position — fort level reset');
+    unitLog(marker, 'Left fortified position — marker left behind');
   }
   // Water crossing check (runs whenever map data is loaded)
   if (waterPolys.length > 0 || riverLines.length > 0) {
@@ -3645,6 +3741,7 @@ setInterval(() => {
       marker.setLatLng(route[route.length-1]);
       unitLog(marker, 'Arrived at destination');
       clearRoute(marker);
+      checkOccupyFortPosition(marker);
     } else {
       const a = route[state.seg], b = route[state.seg+1];
       marker.setLatLng([a[0]+(b[0]-a[0])*state.t, a[1]+(b[1]-a[1])*state.t]);
@@ -4042,6 +4139,12 @@ function startFBListeners() {
   _fbDb.ref('units_blue').on('value', handleSideSnapshot);
   _fbDb.ref('units_red').on('value', handleSideSnapshot);
 
+  // Sync abandoned fortification positions across tabs
+  _fbDb.ref('fort_positions').on('value', snap => {
+    const arr = snap.val();
+    applyFortPositionsFromFirebase(arr ? Object.values(arr) : []);
+  });
+
   // ── annotations ──
   _fbDb.ref(`annotations_${userSide}`).on('value', snap => {
     const d = snap.val();
@@ -4271,7 +4374,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-25-W';
+const VERSION = '2026-06-25-X';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -4466,7 +4569,7 @@ function resetMap() {
   if (_fbDb) {
     // Give Firebase up to 3 s; reload regardless so the button never hangs
     const fbTimeout = setTimeout(doReload, 3000);
-    Promise.all([_fbDb.ref('units_blue').remove(), _fbDb.ref('units_red').remove()])
+    Promise.all([_fbDb.ref('units_blue').remove(), _fbDb.ref('units_red').remove(), _fbDb.ref('fort_positions').remove()])
       .then(() => { clearTimeout(fbTimeout); doReload(); })
       .catch(() => { clearTimeout(fbTimeout); doReload(); });
   } else {
