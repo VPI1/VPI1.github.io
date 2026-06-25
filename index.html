@@ -2676,9 +2676,6 @@ function executeTrenchClear(attacker, targetUid) {
     const atkCas  = fullyAware ? 1 + Math.floor(Math.random() * 2) : Math.random() < 0.35 ? 1 : 0;
     const defDest = damageUnit(target, defCas);
     if (atkCas > 0) damageUnit(attacker, atkCas);
-    // Degrade fort by 2 levels (violent structural damage)
-    target._fortLevel = Math.max(0, (target._fortLevel ?? 0) - 2);
-    target._fortDamage = 0;
     updateFortBadge(target);
     const note = fullyAware ? ' (contested)' : ' (surprise)';
     unitLog(attacker, `Trench cleared${note} — defender −${defCas}${defDest?' · DESTROYED':''}${atkCas>0?`, we −${atkCas}`:''}`);
@@ -4656,7 +4653,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-26-AA';
+const VERSION = '2026-06-26-AB';
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -5283,7 +5280,11 @@ async function main() {
     }
     // Discard any state that predates the last reset (shared via localStorage)
     const resetAt = parseInt(localStorage.getItem(RESET_KEY) || '0');
-    if (bestState?.savedAt && bestState.savedAt <= resetAt) bestState = null;
+    if (bestState?.savedAt && bestState.savedAt <= resetAt) {
+      bestState = null;
+      // Also wipe localStorage so loadSavedState() (which reads it directly) doesn't load stale data
+      try { localStorage.removeItem(SAVE_KEY); } catch {}
+    }
     if (bestState?.savedAt) {
       // Write winner back to localStorage so loadSavedState picks it up
       try { localStorage.setItem(SAVE_KEY, JSON.stringify(bestState)); } catch {}
