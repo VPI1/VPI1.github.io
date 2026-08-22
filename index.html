@@ -4380,24 +4380,34 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
       startFBListeners();
-      // Check Firebase for an existing live game before deciding to push or load
+      // Elect ONE session as spawn authority via Firebase transaction.
+      // Winner pushes all units; losers clear local and wait for Firebase data.
       setTimeout(() => {
-        Promise.all([
-          new Promise(res => _fbDb.ref('units_blue').once('value', res)),
-          new Promise(res => _fbDb.ref('units_red').once('value', res)),
-        ]).then(([snapB, snapR]) => {
-          const live = d => d && d.updatedAt && d.updatedAt >= GLOBAL_RESET_TS;
-          const fbBlue = snapB.val() ? Object.values(snapB.val()).filter(live) : [];
-          const fbRed  = snapR.val() ? Object.values(snapR.val()).filter(live) : [];
-          if (fbBlue.length || fbRed.length) {
-            // Firebase has an active game — discard local spawn and load from Firebase
-            fbLoadAllFromSnapshot(fbBlue, fbRed);
-          } else {
-            // Firebase is empty — we are the first session, push ALL units as authority
-            fbPushAllUnitsAll();
+        if (!_fbDb) return;
+        _fbDb.ref('game_meta/spawn').transaction(cur => {
+          if (!cur || !cur.ts || cur.ts < GLOBAL_RESET_TS) {
+            return { ts: Date.now(), clientId: _fbClientId };
           }
-        }).catch(() => fbPushAllUnitsAll());
-      }, 1500); // slight delay to let listeners register first
+          return undefined; // abort
+        }, (err, committed) => {
+          if (committed) {
+            fbPushAllUnitsAll();
+          } else {
+            _fbApplying = true;
+            try { for (const m of [...allMarkers]) { map.removeLayer(m); } allMarkers.length = 0; }
+            finally { _fbApplying = false; }
+            showToast('Loading shared map…', '#42a5f5');
+            _fbDb.ref('units_blue').once('value', snapB => {
+              const live = d => d && d.updatedAt && d.updatedAt >= GLOBAL_RESET_TS;
+              (snapB.val() ? Object.values(snapB.val()).filter(live) : []).forEach(d => applyRemoteUnit(d));
+            });
+            _fbDb.ref('units_red').once('value', snapR => {
+              const live = d => d && d.updatedAt && d.updatedAt >= GLOBAL_RESET_TS;
+              (snapR.val() ? Object.values(snapR.val()).filter(live) : []).forEach(d => applyRemoteUnit(d));
+            });
+          }
+        }, false);
+      }, 600);
       showToast('Multiplayer connected', '#66bb6a');
     } catch(e) { console.warn('Firebase init error:', e); }
   });
@@ -4709,7 +4719,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AE';
+const VERSION = '2026-08-22-AF';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
@@ -4908,7 +4918,7 @@ function resetMap() {
   if (_fbDb) {
     // Give Firebase up to 3 s; reload regardless so the button never hangs
     const fbTimeout = setTimeout(doReload, 3000);
-    Promise.all([_fbDb.ref('units_blue').remove(), _fbDb.ref('units_red').remove(), _fbDb.ref('fort_positions').remove()])
+    Promise.all([_fbDb.ref('units_blue').remove(), _fbDb.ref('units_red').remove(), _fbDb.ref('fort_positions').remove(), _fbDb.ref('game_meta/spawn').remove()])
       .then(() => { clearTimeout(fbTimeout); doReload(); })
       .catch(() => { clearTimeout(fbTimeout); doReload(); });
   } else {
@@ -5335,11 +5345,16 @@ async function main() {
     } else {
       bestState = ghState?.units?.length ? ghState : lsRaw;
     }
+    // When Firebase is configured it is the source of truth — always spawn fresh
+    const _hasFBConfig = !!(getFBConfig()?.databaseURL);
+    if (_hasFBConfig) {
+      bestState = null;
+      try { localStorage.removeItem(SAVE_KEY); } catch {}
+    }
     // Discard any state that predates the last reset (shared via localStorage)
     const resetAt = parseInt(localStorage.getItem(RESET_KEY) || '0');
     if (bestState?.savedAt && (bestState.savedAt <= resetAt || bestState.savedAt < GLOBAL_RESET_TS)) {
       bestState = null;
-      // Also wipe localStorage so loadSavedState() (which reads it directly) doesn't load stale data
       try { localStorage.removeItem(SAVE_KEY); } catch {}
     }
     if (bestState?.savedAt) {
@@ -5355,7 +5370,7 @@ async function main() {
         deploymentPoints.splice(deploymentPoints.indexOf(dp), 1);
       }
     }
-    if (loadSavedState()) {
+    if (!_hasFBConfig && loadSavedState()) {
       // Apply pending events queued by GH Actions ticks while nobody was online
       const pending = bestState?._pendingEvents;
       if (pending?.length) {
