@@ -4410,6 +4410,7 @@ function startFBListeners() {
       for (const d of Object.values(all)) {
         if (!d) continue;
         if (d.clientId === _fbClientId) continue; // skip own echoes
+        if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue; // skip stale pre-reset data
         applyRemoteUnit(d);
       }
     } finally { _fbApplying = false; }
@@ -4453,6 +4454,9 @@ function fbSyncUnit(m) {
     side: m._side, role: m._role, count: m._count,
     remainingRoute: route, updatedAt: Date.now(),
     clientId: _fbClientId,
+    fortLevel: m._fortLevel ?? 0,
+    ammo: m._ammo ?? null,
+    hp: m._hp ?? null,
   }).catch(e => console.warn('FB write error:', e));
 }
 
@@ -4501,10 +4505,16 @@ function applyRemoteUnit(d) {
         existing.setLatLng([d.lat, d.lng]);
       }
       if (d.count !== existing._count) { existing._count = d.count; existing.setIcon(soldierIcon(existing._side, d.count, existing._role)); }
+      if (d.fortLevel != null) { existing._fortLevel = d.fortLevel; updateFortBadge(existing); }
+      if (d.ammo != null) existing._ammo = d.ammo;
+      if (d.hp != null) existing._hp = d.hp;
     } else if (d.uid && d.side && d.role && d.lat != null) {
       const m = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
       m._uid = d.uid;
       m._ownerClientId = d.clientId; // mark as owned by the remote client
+      if (d.fortLevel) { m._fortLevel = d.fortLevel; setTimeout(() => updateFortBadge(m), 50); }
+      if (d.ammo != null) m._ammo = d.ammo;
+      if (d.hp != null) m._hp = d.hp;
       if (d.remainingRoute?.length >= 2) assignRoute(m, d.remainingRoute);
     }
   } finally { _fbApplying = false; }
@@ -4653,7 +4663,8 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-06-26-AC';
+const VERSION = '2026-08-22-AD';
+  const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -5280,7 +5291,7 @@ async function main() {
     }
     // Discard any state that predates the last reset (shared via localStorage)
     const resetAt = parseInt(localStorage.getItem(RESET_KEY) || '0');
-    if (bestState?.savedAt && bestState.savedAt <= resetAt) {
+    if (bestState?.savedAt && (bestState.savedAt <= resetAt || bestState.savedAt < GLOBAL_RESET_TS)) {
       bestState = null;
       // Also wipe localStorage so loadSavedState() (which reads it directly) doesn't load stale data
       try { localStorage.removeItem(SAVE_KEY); } catch {}
