@@ -4380,7 +4380,24 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
       startFBListeners();
-      setTimeout(fbPushAllUnits, 1000); // push our units after listeners are ready
+      // Check Firebase for an existing live game before deciding to push or load
+      setTimeout(() => {
+        Promise.all([
+          new Promise(res => _fbDb.ref('units_blue').once('value', res)),
+          new Promise(res => _fbDb.ref('units_red').once('value', res)),
+        ]).then(([snapB, snapR]) => {
+          const live = d => d && d.updatedAt && d.updatedAt >= GLOBAL_RESET_TS;
+          const fbBlue = snapB.val() ? Object.values(snapB.val()).filter(live) : [];
+          const fbRed  = snapR.val() ? Object.values(snapR.val()).filter(live) : [];
+          if (fbBlue.length || fbRed.length) {
+            // Firebase has an active game — discard local spawn and load from Firebase
+            fbLoadAllFromSnapshot(fbBlue, fbRed);
+          } else {
+            // Firebase is empty — we are the first session, push ALL units as authority
+            fbPushAllUnitsAll();
+          }
+        }).catch(() => fbPushAllUnitsAll());
+      }, 1500); // slight delay to let listeners register first
       showToast('Multiplayer connected', '#66bb6a');
     } catch(e) { console.warn('Firebase init error:', e); }
   });
@@ -4473,6 +4490,35 @@ function fbPushAllUnits() {
       if (m._side === userSide) fbSyncUnit(m);
     }
   });
+}
+
+function fbPushAllUnitsAll() {
+  // First session: push ALL units (both sides) as the canonical game state
+  if (!_fbDb) return;
+  Promise.all([_fbDb.ref('units_blue').remove(), _fbDb.ref('units_red').remove()]).then(() => {
+    for (const m of allMarkers) {
+      if (!m._uid) continue;
+      const pos = m.getLatLng();
+      _fbDb.ref(`units_${m._side}/${m._uid}`).set({
+        uid: m._uid, lat: pos.lat, lng: pos.lng,
+        side: m._side, role: m._role, count: m._count,
+        remainingRoute: null, updatedAt: Date.now(),
+        clientId: _fbClientId,
+        fortLevel: m._fortLevel ?? 0,
+        ammo: m._ammo ?? null, hp: m._hp ?? null,
+      }).catch(e => console.warn('FB write error:', e));
+    }
+  });
+}
+
+function fbLoadAllFromSnapshot(fbBlue, fbRed) {
+  // Replace entire local map state with Firebase data
+  _fbApplying = true;
+  try {
+    for (const m of [...allMarkers]) { map.removeLayer(m); }
+    allMarkers.length = 0;
+  } finally { _fbApplying = false; }
+  [...fbBlue, ...fbRed].forEach(d => { if (d) applyRemoteUnit(d); });
 }
 
 function fbSyncAnnotations() {
@@ -4663,7 +4709,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AD';
+const VERSION = '2026-08-22-AE';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
