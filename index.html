@@ -4308,7 +4308,9 @@ async function getElevationModifier(atkPos, tgtPos) {
 function createMarker(pt, side, count, role = '') {
   const m = L.marker(pt, { icon: soldierIcon(side, count, role), draggable: false });
   m._side = side; m._count = count; m._role = role;
-  m._uid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  m._uid = _spawnUidCounter >= 0
+    ? (SPAWN_KEY + '_' + (_spawnUidCounter++))
+    : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
   m._ownerClientId = _fbClientId; // track which client created this unit
   m._provisional = (userSide && side !== userSide); // locally-spawned opposite-side units replaced when real tab connects
   m._ammo = 0; m._maxAmmo = 0; m._drones = 0;
@@ -4380,34 +4382,9 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
       startFBListeners();
-      // Elect ONE session as spawn authority via Firebase transaction.
-      // Winner pushes all units; losers clear local and wait for Firebase data.
-      setTimeout(() => {
-        if (!_fbDb) return;
-        _fbDb.ref('game_meta/spawn').transaction(cur => {
-          if (!cur || !cur.ts || cur.ts < GLOBAL_RESET_TS) {
-            return { ts: Date.now(), clientId: _fbClientId };
-          }
-          return undefined; // abort
-        }, (err, committed) => {
-          if (committed) {
-            fbPushAllUnitsAll();
-          } else {
-            _fbApplying = true;
-            try { for (const m of [...allMarkers]) { map.removeLayer(m); } allMarkers.length = 0; }
-            finally { _fbApplying = false; }
-            showToast('Loading shared map…', '#42a5f5');
-            _fbDb.ref('units_blue').once('value', snapB => {
-              const live = d => d && d.updatedAt && d.updatedAt >= GLOBAL_RESET_TS;
-              (snapB.val() ? Object.values(snapB.val()).filter(live) : []).forEach(d => applyRemoteUnit(d));
-            });
-            _fbDb.ref('units_red').once('value', snapR => {
-              const live = d => d && d.updatedAt && d.updatedAt >= GLOBAL_RESET_TS;
-              (snapR.val() ? Object.values(snapR.val()).filter(live) : []).forEach(d => applyRemoteUnit(d));
-            });
-          }
-        }, false);
-      }, 600);
+      // All sessions spawn deterministically (same seed = same units/UIDs).
+      // Pushing own-side is idempotent — last write wins but all are identical.
+      setTimeout(fbPushAllUnits, 1000);
       showToast('Multiplayer connected', '#66bb6a');
     } catch(e) { console.warn('Firebase init error:', e); }
   });
@@ -4719,8 +4696,15 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AF';
+const VERSION = '2026-08-22-AG';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
+  const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
+  let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
+  function seededRand(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
+  }
 console.log('Tactical Map v' + VERSION);
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
@@ -5427,6 +5411,11 @@ async function main() {
       return;
     }
 
+    // Seed Math.random for deterministic spawn — all sessions get identical units
+    const _origMathRand = Math.random;
+    Math.random = seededRand(SPAWN_KEY);
+    _spawnUidCounter = 0;
+
     const MIN_DIST_SQ = 0.002 ** 2;
     const occupied = [];
 
@@ -5596,6 +5585,9 @@ async function main() {
         createMarker(pt, side, groupSize('fpv'), 'fpv');
       }
     }
+
+    Math.random = _origMathRand;
+    _spawnUidCounter = -1;
 
     document.getElementById('loading').style.display = 'none';
     loadAnnotations();
