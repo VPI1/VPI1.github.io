@@ -4024,11 +4024,21 @@ setInterval(() => {
       marker.setLatLng([a[0]+(b[0]-a[0])*state.t, a[1]+(b[1]-a[1])*state.t]);
       rebuildLine(state);
       if (state.seg !== prevSeg) rebuildHandles(state);
-      if (marker._side === userSide) fbSyncUnit(marker);
     }
   }
   // keep range circle centred on selected unit as it moves
   updatePanelRange();
+  // Throttled position sync for moving own-side units (once per second)
+  if (_fbDb && userSide) {
+    const _now = Date.now();
+    for (const [marker] of movingMarkers) {
+      if (marker._side !== userSide) continue;
+      if (!marker._lastFbSync || _now - marker._lastFbSync >= 1000) {
+        marker._lastFbSync = _now;
+        fbSyncUnit(marker);
+      }
+    }
+  }
 
   // ── TDP auto-spawn ──
   const now = Date.now();
@@ -4539,8 +4549,18 @@ function applyRemoteUnit(d) {
       if (existing) { map.removeLayer(existing); allMarkers.splice(allMarkers.indexOf(existing), 1); }
     } else if (existing) {
       if (d.remainingRoute?.length >= 2) {
-        clearRoute(existing);
-        assignRoute(existing, d.remainingRoute);
+        // Bypass assignRoute guards (water check, fort check, toasts) for remote units
+        if (movingMarkers.has(existing)) {
+          const old = movingMarkers.get(existing);
+          if (old.line) map.removeLayer(old.line);
+          (old.vertices||[]).forEach(v => map.removeLayer(v));
+          (old.splits||[]).forEach(s => map.removeLayer(s));
+          movingMarkers.delete(existing);
+        }
+        existing.setLatLng(d.remainingRoute[0]);
+        const rLine = L.polyline(d.remainingRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map);
+        movingMarkers.set(existing, {marker:existing, route:d.remainingRoute, seg:0, t:0, line:rLine, vertices:[], splits:[]});
+        existing.dragging.disable();
       } else {
         clearRoute(existing);
         existing.setLatLng([d.lat, d.lng]);
@@ -4556,7 +4576,11 @@ function applyRemoteUnit(d) {
       if (d.fortLevel) { m._fortLevel = d.fortLevel; setTimeout(() => updateFortBadge(m), 50); }
       if (d.ammo != null) m._ammo = d.ammo;
       if (d.hp != null) m._hp = d.hp;
-      if (d.remainingRoute?.length >= 2) assignRoute(m, d.remainingRoute);
+      if (d.remainingRoute?.length >= 2) {
+        const rLine2 = L.polyline(d.remainingRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map);
+        movingMarkers.set(m, {marker:m, route:d.remainingRoute, seg:0, t:0, line:rLine2, vertices:[], splits:[]});
+        m.dragging.disable();
+      }
     }
   } finally { _fbApplying = false; }
 }
@@ -4704,7 +4728,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AH';
+const VERSION = '2026-08-22-AI';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
