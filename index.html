@@ -4024,6 +4024,7 @@ setInterval(() => {
       marker.setLatLng([a[0]+(b[0]-a[0])*state.t, a[1]+(b[1]-a[1])*state.t]);
       rebuildLine(state);
       if (state.seg !== prevSeg) rebuildHandles(state);
+      if (marker._side === userSide) fbSyncUnit(marker);
     }
   }
   // keep range circle centred on selected unit as it moves
@@ -4385,6 +4386,13 @@ function initFirebase() {
       // All sessions spawn deterministically (same seed = same units/UIDs).
       // Pushing own-side is idempotent — last write wins but all are identical.
       setTimeout(fbPushAllUnits, 1000);
+      // Fallback re-sync: re-read both sides every 5s to catch any missed real-time events
+      setInterval(() => {
+        if (!_fbDb) return;
+        ['units_blue', 'units_red'].forEach(path => {
+          _fbDb.ref(path).once('value', snap => handleSideSnapshot(snap));
+        });
+      }, 5000);
       showToast('Multiplayer connected', '#66bb6a');
     } catch(e) { console.warn('Firebase init error:', e); }
   });
@@ -4696,7 +4704,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AG';
+const VERSION = '2026-08-22-AH';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
