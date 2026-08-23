@@ -4381,11 +4381,12 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
 
-      // Each player is authority for their own side only.
-      // Listen to opponent side for real-time updates.
-      const oppSide = userSide === 'blue' ? 'red' : 'blue';
-      _fbDb.ref('units_' + oppSide).on('value', function(snap) {
-        fbApplyOpponentSnapshot(snap.val() || {});
+      // Listen to BOTH sides — skip units from own clientId.
+      // This supports multiple players on the same team seeing each other.
+      ['units_blue', 'units_red'].forEach(function(path) {
+        _fbDb.ref(path).on('value', function(snap) {
+          fbApplySideSnapshot(path.replace('units_', ''), snap.val() || {});
+        });
       });
 
       // Fort positions and annotations
@@ -4408,11 +4409,13 @@ function initFirebase() {
       setTimeout(function() { fbPushMySide(); }, 800);
       setInterval(function() { fbPushMySide(); }, 2000);
 
-      // Fallback poll: re-read opponent every 3s in case real-time listener missed something
+      // Fallback poll: re-read both sides every 3s
       setInterval(function() {
         if (!_fbDb) return;
-        _fbDb.ref('units_' + oppSide).once('value', function(snap) {
-          fbApplyOpponentSnapshot(snap.val() || {});
+        ['blue', 'red'].forEach(function(side) {
+          _fbDb.ref('units_' + side).once('value', function(snap) {
+            fbApplySideSnapshot(side, snap.val() || {});
+          });
         });
       }, 3000);
 
@@ -4437,12 +4440,14 @@ function fbPushMySide() {
         uid: m._uid, lat: pos.lat, lng: pos.lng,
         side: m._side, role: m._role, count: m._count,
         route: route, updatedAt: Date.now(),
+        clientId: _fbClientId,
         fortLevel: m._fortLevel != null ? m._fortLevel : 0,
         ammo: m._ammo != null ? m._ammo : null,
         hp: m._hp != null ? m._hp : null,
       };
     }
-    _fbDb.ref('units_' + userSide).set(updates).catch(function(e) { console.warn('FB push error:', e); });
+    // update() merges — teammates on same side won't overwrite each other
+    _fbDb.ref('units_' + userSide).update(updates).catch(function(e) { console.warn('FB push error:', e); });
   }, 80);
 }
 
@@ -4453,18 +4458,25 @@ function fbSyncUnit(m) {
 
 function fbRemoveUnit(m) {
   if (!_fbDb || !m._uid || m._side !== userSide) return;
-  fbPushMySide();
+  // Explicitly delete — update() won't remove absent keys
+  _fbDb.ref('units_' + userSide + '/' + m._uid).remove().catch(function() {});
 }
 
-function fbApplyOpponentSnapshot(all) {
+function fbApplySideSnapshot(side, all) {
   if (!userSide) return;
-  var oppSide = userSide === 'blue' ? 'red' : 'blue';
-  var keys = Object.keys(all);
-  if (keys.length === 0) return; // opponent not connected yet — keep provisional units
+  // Collect units from other clients only (skip own echoes)
+  var remoteUnits = {};
+  for (var uid in all) {
+    var d = all[uid];
+    if (d && d.clientId !== _fbClientId) remoteUnits[uid] = d;
+  }
+  var hasRemote = Object.keys(remoteUnits).length > 0;
+  if (!hasRemote) return; // no remote clients for this side yet
 
-  // Remove local opponent units not in Firebase
-  for (var m of [...allMarkers.filter(function(mk) { return mk._side === oppSide; })]) {
-    if (!all[m._uid]) {
+  // Remove local non-own units on this side that disappeared from Firebase
+  for (var m of [...allMarkers.filter(function(mk) { return mk._side === side; })]) {
+    if (m._clientId === _fbClientId) continue; // skip own units
+    if (!remoteUnits[m._uid]) {
       if (movingMarkers.has(m)) {
         var s = movingMarkers.get(m);
         if (s.line) map.removeLayer(s.line);
@@ -4477,11 +4489,10 @@ function fbApplyOpponentSnapshot(all) {
     }
   }
 
-  // Add/update opponent units
-  for (var d of Object.values(all)) {
-    if (!d || !d.uid) continue;
-    if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue;
-    fbApplyUnit(d);
+  for (var d2 of Object.values(remoteUnits)) {
+    if (!d2 || !d2.uid) continue;
+    if (d2.updatedAt && d2.updatedAt < GLOBAL_RESET_TS) continue;
+    fbApplyUnit(d2);
   }
 }
 
@@ -4520,6 +4531,7 @@ function fbApplyUnit(d) {
   } else {
     var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
     m2._uid = d.uid;
+    m2._clientId = d.clientId; // mark as owned by remote client
     if (d.fortLevel) { m2._fortLevel = d.fortLevel; setTimeout(function() { updateFortBadge(m2); }, 50); }
     if (d.ammo != null) m2._ammo = d.ammo;
     if (d.hp != null) m2._hp = d.hp;
@@ -4679,7 +4691,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AJ';
+const VERSION = '2026-08-22-AK';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
