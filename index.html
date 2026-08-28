@@ -4447,6 +4447,10 @@ function fbPushMySide() {
       };
     }
     // Individual set() per unit — works under child-level Firebase rules
+    // Tag own markers so fbApplySideSnapshot knows not to delete them
+    for (var m3 of allMarkers) {
+      if (m3._side === userSide && m3._uid && updates[m3._uid]) m3._clientId = _fbClientId;
+    }
     for (var uid in updates) {
       _fbDb.ref('units_' + userSide + '/' + uid).set(updates[uid]).catch(function(e) { console.warn('FB push error:', e); });
     }
@@ -4466,19 +4470,16 @@ function fbRemoveUnit(m) {
 
 function fbApplySideSnapshot(side, all) {
   if (!userSide) return;
-  // Collect units from other clients only (skip own echoes)
-  var remoteUnits = {};
-  for (var uid in all) {
-    var d = all[uid];
-    if (d && d.clientId !== _fbClientId) remoteUnits[uid] = d;
-  }
-  var hasRemote = Object.keys(remoteUnits).length > 0;
-  if (!hasRemote) return; // no remote clients for this side yet
+  if (Object.keys(all).length === 0) return; // nothing in Firebase yet
 
-  // Remove local non-own units on this side that disappeared from Firebase
+  // Delete remote-owned units whose UID is completely absent from Firebase.
+  // Own units (m._clientId === _fbClientId) are NEVER deleted by snapshots.
+  // Untagged provisional units (m._clientId undefined) are also kept —
+  // fbPushMySide tags them once they're written.
   for (var m of [...allMarkers.filter(function(mk) { return mk._side === side; })]) {
-    if (m._clientId === _fbClientId) continue; // skip own units
-    if (!remoteUnits[m._uid]) {
+    if (!m._clientId || m._clientId === _fbClientId) continue; // skip own / untagged
+    if (!all[m._uid]) {
+      // UID gone from Firebase entirely — removed by the session that owned it
       if (movingMarkers.has(m)) {
         var s = movingMarkers.get(m);
         if (s.line) map.removeLayer(s.line);
@@ -4491,10 +4492,12 @@ function fbApplySideSnapshot(side, all) {
     }
   }
 
-  for (var d2 of Object.values(remoteUnits)) {
-    if (!d2 || !d2.uid) continue;
-    if (d2.updatedAt && d2.updatedAt < GLOBAL_RESET_TS) continue;
-    fbApplyUnit(d2);
+  // Apply / update units from other clients
+  for (var d of Object.values(all)) {
+    if (!d || !d.uid) continue;
+    if (d.clientId === _fbClientId) continue; // skip own echoes
+    if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue;
+    fbApplyUnit(d);
   }
 }
 
@@ -4693,7 +4696,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AL';
+const VERSION = '2026-08-22-AM';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
