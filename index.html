@@ -4376,20 +4376,18 @@ function setFBConfig(c) { localStorage.setItem(FB_KEY, JSON.stringify(c)); }
 function initFirebase() {
   const cfg = getFBConfig();
   if (!cfg.databaseURL) return;
-  loadFirebaseSDK(() => {
+  loadFirebaseSDK(function() {
     try {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
 
-      // Listen to BOTH sides — skip units from own clientId.
-      // This supports multiple players on the same team seeing each other.
+      // Listen to BOTH sides so teammates and opponents sync in real-time.
       ['units_blue', 'units_red'].forEach(function(path) {
         _fbDb.ref(path).on('value', function(snap) {
           fbApplySideSnapshot(path.replace('units_', ''), snap.val() || {});
         });
       });
 
-      // Fort positions and annotations
       _fbDb.ref('fort_positions').on('value', function(snap) {
         var arr = snap.val();
         applyFortPositionsFromFirebase(arr ? Object.values(arr) : []);
@@ -4405,19 +4403,15 @@ function initFirebase() {
         }
       });
 
-      // Push own side immediately, then every 2s heartbeat
-      setTimeout(function() { fbPushMySide(); }, 800);
-      setInterval(function() { fbPushMySide(); }, 2000);
+      // Clear own-side stale data, then push fresh current state atomically.
+      // One atomic set() means Firebase fires on('value') exactly once with all units —
+      // no partial-snapshot race condition.
+      _fbDb.ref('units_' + userSide).remove().then(function() {
+        fbPushMySide();
+      });
 
-      // Fallback poll: re-read both sides every 3s
-      setInterval(function() {
-        if (!_fbDb) return;
-        ['blue', 'red'].forEach(function(side) {
-          _fbDb.ref('units_' + side).once('value', function(snap) {
-            fbApplySideSnapshot(side, snap.val() || {});
-          });
-        });
-      }, 3000);
+      // Heartbeat: re-push own side every 2s so moving units stay synced
+      setInterval(function() { fbPushMySide(); }, 2000);
 
       showToast('Multiplayer connected', '#66bb6a');
     } catch(e) { console.warn('Firebase init error:', e); }
@@ -4446,14 +4440,11 @@ function fbPushMySide() {
         hp: m._hp != null ? m._hp : null,
       };
     }
-    // Individual set() per unit — works under child-level Firebase rules
-    // Tag own markers so fbApplySideSnapshot knows not to delete them
-    for (var m3 of allMarkers) {
-      if (m3._side === userSide && m3._uid && updates[m3._uid]) m3._clientId = _fbClientId;
-    }
-    for (var uid in updates) {
-      _fbDb.ref('units_' + userSide + '/' + uid).set(updates[uid]).catch(function(e) { console.warn('FB push error:', e); });
-    }
+    // Atomic set on parent — one write, one snapshot, no race condition.
+    // Requires ".write": true at root (not just child-level rules).
+    _fbDb.ref('units_' + userSide).set(updates).catch(function(e) {
+      console.warn('FB push error:', e);
+    });
   }, 80);
 }
 
@@ -4464,39 +4455,20 @@ function fbSyncUnit(m) {
 
 function fbRemoveUnit(m) {
   if (!_fbDb || !m._uid || m._side !== userSide) return;
-  // Explicitly delete — update() won't remove absent keys
+  // Remove the specific unit from Firebase, then re-push remaining units atomically
   _fbDb.ref('units_' + userSide + '/' + m._uid).remove().catch(function() {});
 }
 
+// Apply a full-side snapshot from Firebase.
+// ONLY adds/updates units from other clients — never deletes.
+// Units are removed only via explicit fbRemoveUnit() calls.
 function fbApplySideSnapshot(side, all) {
   if (!userSide) return;
-  if (Object.keys(all).length === 0) return; // nothing in Firebase yet
-
-  // Delete remote-owned units whose UID is completely absent from Firebase.
-  // Own units (m._clientId === _fbClientId) are NEVER deleted by snapshots.
-  // Untagged provisional units (m._clientId undefined) are also kept —
-  // fbPushMySide tags them once they're written.
-  for (var m of [...allMarkers.filter(function(mk) { return mk._side === side; })]) {
-    if (!m._clientId || m._clientId === _fbClientId) continue; // skip own / untagged
-    if (!all[m._uid]) {
-      // UID gone from Firebase entirely — removed by the session that owned it
-      if (movingMarkers.has(m)) {
-        var s = movingMarkers.get(m);
-        if (s.line) map.removeLayer(s.line);
-        (s.vertices || []).forEach(function(v) { map.removeLayer(v); });
-        movingMarkers.delete(m);
-      }
-      map.removeLayer(m);
-      var idx = allMarkers.indexOf(m);
-      if (idx >= 0) allMarkers.splice(idx, 1);
-    }
-  }
-
-  // Apply / update units from other clients
-  for (var d of Object.values(all)) {
+  for (var uid in all) {
+    var d = all[uid];
     if (!d || !d.uid) continue;
     if (d.clientId === _fbClientId) continue; // skip own echoes
-    if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue;
+    if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue; // skip stale pre-reset data
     fbApplyUnit(d);
   }
 }
@@ -4522,7 +4494,7 @@ function fbApplyUnit(d) {
         if (old2.line) map.removeLayer(old2.line);
         (old2.vertices || []).forEach(function(v) { map.removeLayer(v); });
         movingMarkers.delete(existing);
-        try { existing.dragging.enable(); } catch(e) {}
+        try { existing.dragging.enable(); } catch(e2) {}
       }
       existing.setLatLng([d.lat, d.lng]);
     }
@@ -4533,10 +4505,10 @@ function fbApplyUnit(d) {
     if (d.fortLevel != null) { existing._fortLevel = d.fortLevel; updateFortBadge(existing); }
     if (d.ammo != null) existing._ammo = d.ammo;
     if (d.hp != null) existing._hp = d.hp;
-  } else {
+  } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
     m2._uid = d.uid;
-    m2._clientId = d.clientId; // mark as owned by remote client
+    m2._clientId = d.clientId;
     if (d.fortLevel) { m2._fortLevel = d.fortLevel; setTimeout(function() { updateFortBadge(m2); }, 50); }
     if (d.ammo != null) m2._ammo = d.ammo;
     if (d.hp != null) m2._hp = d.hp;
@@ -4696,7 +4668,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AM';
+const VERSION = '2026-08-22-AN';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
