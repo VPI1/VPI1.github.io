@@ -2519,6 +2519,14 @@ function applySupply(unit) {
 // Ongoing firefights: attacker → { defender, intervalId }
 const activeFights = new Map();
 
+// Deterministic seeded RNG — same seed → same sequence on every client.
+// Used for combat so both players compute identical outcomes independently.
+function _mkRng(seed) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return function() { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
+}
+
 function fightTick(attacker, defender) {
   if (!allMarkers.includes(attacker) || !allMarkers.includes(defender) ||
       attacker._ammo <= 0) {
@@ -2537,6 +2545,8 @@ function fightTick(attacker, defender) {
 
   const now = Date.now();
   const fight = activeFights.get(attacker);
+  if (fight) fight.tickSeed = (fight.tickSeed || 0) + 1;
+  const _rng = _mkRng((attacker._uid||'?') + ':' + (defender._uid||'?') + ':' + (fight ? fight.startedAt + ':' + fight.tickSeed : '0'));
   const defResponding = !fight || now >= fight.respondAt;
 
   // Suppression penalty
@@ -2566,21 +2576,21 @@ function fightTick(attacker, defender) {
   const defHit = accuracy * (defSup ? 0.28 : 1.0); // defender equally capable; fortBonus already reduces dCas
 
   if (atkAlive.length) {
-    for (const s of atkAlive) { if (s.ammo > 0 && Math.random() < atkHit * 0.20) dCas++; }
+    for (const s of atkAlive) { if (s.ammo > 0 && _rng() < atkHit * 0.20) dCas++; }
   } else {
-    for (let i = 0; i < attacker._count; i++) if (Math.random() < atkHit * 0.20) dCas++;
+    for (let i = 0; i < attacker._count; i++) if (_rng() < atkHit * 0.20) dCas++;
   }
   if (defResponding) {
     if (defAlive.length) {
-      for (const s of defAlive) { if (s.ammo > 0 && Math.random() < defHit * 0.20) aCas++; }
+      for (const s of defAlive) { if (s.ammo > 0 && _rng() < defHit * 0.20) aCas++; }
     } else {
-      for (let i = 0; i < defender._count; i++) if (Math.random() < defHit * 0.20) aCas++;
+      for (let i = 0; i < defender._count; i++) if (_rng() < defHit * 0.20) aCas++;
     }
   }
 
   spawnBullets(attacker, defender);
 
-  if (Math.random() < inconclusiveChance) {
+  if (_rng() < inconclusiveChance) {
     const distLabel = distM < 100 ? 'close range' : distM < 300 ? 'medium range' : 'long range';
     unitLog(attacker, `Exchange vs ${ROLES[defender._role]?.label ?? 'enemy'} (${distLabel}): inconclusive`);
     if (defResponding) unitLog(defender, `Exchange vs ${ROLES[attacker._role]?.label ?? 'enemy'} (${distLabel}): inconclusive`);
@@ -2590,10 +2600,13 @@ function fightTick(attacker, defender) {
   }
 
   // No guaranteed kill — both sides may score zero in a tick
-  if (Math.random() < 0.10) dCas++;
-  if (defResponding && Math.random() < 0.10) aCas++;
+  if (_rng() < 0.10) dCas++;
+  if (defResponding && _rng() < 0.10) aCas++;
   const aDestroyed = aCas > 0 ? damageUnit(attacker, aCas) : false;
   const dDestroyed = damageUnit(defender, dCas);
+  // Immediately push both units so all clients see this tick's outcome right away
+  fbSyncAnyUnit(attacker);
+  fbSyncAnyUnit(defender);
   const msg = `Firefight at ${Math.round(distM)}m! Enemy: −${dCas}${dDestroyed?' ✗':''}  Friendly: −${aCas}${aDestroyed?' ✗':''}`;
   unitLog(attacker, `Exchange vs ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m: we −${aCas}${aDestroyed?' (destroyed)':''}, they −${dCas}${dDestroyed?' (destroyed)':''}`);
   unitLog(defender, `Exchange vs ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m: we −${dCas}${dDestroyed?' (destroyed)':''}, they −${aCas}${aDestroyed?' (destroyed)':''}`);
@@ -2610,7 +2623,7 @@ function startFight(attacker, defender) {
   unitLog(attacker, `Firefight started vs ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m`);
   unitLog(defender, `Taking fire from ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — reacting…`);
   const intervalId = setInterval(() => fightTick(attacker, defender), 8000 / TIME_SCALE);
-  activeFights.set(attacker, { defender, intervalId, respondAt: Date.now() + reactionMs });
+  activeFights.set(attacker, { defender, intervalId, respondAt: Date.now() + reactionMs, tickSeed: 0, startedAt: Math.floor(Date.now() / 1000) });
   fightTick(attacker, defender); // attacker fires first; defender not yet responding
   setTimeout(() => {
     unitLog(defender, `Returning fire on ${ROLES[attacker._role]?.label ?? 'enemy'}`);
@@ -3227,6 +3240,15 @@ function executeFPVStrike(pilot, target) {
   flyingFPVs.push({ droneMarker, pilot, target, lat: fromPos[0], lng: fromPos[1], dstLat: toPos[0], dstLng: toPos[1] });
   unitLog(pilot, `FPV launched → ${ROLES[target._role]?.label ?? 'target'} · ETA ${fmtETA(etaSec)} · ${fmtDist(distM)}`);
   showToast(`FPV drone launched! ETA ${fmtETA(etaSec)}`, '#ffa726');
+  // Push FPV event so teammates/opponents see the drone flying in real-time
+  if (_fbDb) {
+    _fbDb.ref('fpv_events').push({
+      clientId: _fbClientId,
+      fromLat: fromPos[0], fromLng: fromPos[1],
+      toLat: toPos[0], toLng: toPos[1],
+      launchedAt: Date.now()
+    }).catch(function() {});
+  }
 }
 
 // Step 4: drone arrives → apply casualties
@@ -3628,7 +3650,8 @@ setInterval(() => {
       if (interceptors.length > 0 && Math.random() < 0.25) {
         map.removeLayer(d.droneMarker);
         flyingFPVs.splice(i, 1);
-        applyFPVImpact(d.pilot, d.target, true);
+        if (!d.remote) applyFPVImpact(d.pilot, d.target, true);
+        else showToast('FPV drone shot down!', '#ffa726');
         continue;
       }
     }
@@ -3636,7 +3659,12 @@ setInterval(() => {
     if (dist <= step) {
       map.removeLayer(d.droneMarker);
       flyingFPVs.splice(i, 1);
-      applyFPVImpact(d.pilot, d.target, false);
+      if (d.remote) {
+        showExplosion(L.latLng(d.dstLat, d.dstLng), 70);
+        showCrater(L.latLng(d.dstLat, d.dstLng), 'fpv');
+      } else {
+        applyFPVImpact(d.pilot, d.target, false);
+      }
     } else {
       const r = step / dist;
       d.lat += (d.dstLat - d.lat) * r;
@@ -4421,6 +4449,18 @@ function initFirebase() {
         }
       });
 
+      // FPV drone events — show remote drones flying in real-time
+      _fbDb.ref('fpv_events').on('child_added', function(snap) {
+        var d = snap.val();
+        if (!d || d.clientId === _fbClientId) return; // skip own launches
+        if (Date.now() - d.launchedAt > 120000) return; // skip events older than 2 min
+        var bearing = bearingDeg([d.fromLat, d.fromLng], [d.toLat, d.toLng]);
+        var droneMarker = L.marker([d.fromLat, d.fromLng], { icon: fpvDroneIcon(bearing), zIndexOffset: 300 })
+          .addTo(map).bindTooltip('FPV incoming!', { permanent: true, className: 'fpv-eta-tip', direction: 'right', offset: [8,0] });
+        flyingFPVs.push({ droneMarker: droneMarker, pilot: null, target: null,
+          lat: d.fromLat, lng: d.fromLng, dstLat: d.toLat, dstLng: d.toLng, remote: true });
+      });
+
       // Clear stale own-side data, push fresh state atomically
       _fbDb.ref('units_' + userSide).remove().then(function() {
         fbPushMySide();
@@ -4475,6 +4515,24 @@ function fbPushMySide() {
 function fbSyncUnit(m) {
   if (!_fbDb || !m._uid || m._side !== userSide) return;
   fbPushMySide();
+}
+
+// Push any unit (including enemy side) to Firebase immediately after damage.
+// This ensures all clients see combat outcomes within milliseconds, not 2s.
+function fbSyncAnyUnit(m) {
+  if (!_fbDb || !m._uid) return;
+  var pos = m.getLatLng();
+  var state = movingMarkers.get(m);
+  var route = state ? [[pos.lat, pos.lng]].concat(state.route.slice(state.seg + 1)) : null;
+  _fbDb.ref('units_' + m._side + '/' + m._uid).set({
+    uid: m._uid, lat: pos.lat, lng: pos.lng,
+    side: m._side, role: m._role, count: m._count,
+    route: route, updatedAt: Date.now(),
+    clientId: _fbClientId,
+    fortLevel: m._fortLevel != null ? m._fortLevel : 0,
+    ammo: m._ammo != null ? m._ammo : null,
+    hp: m._hp != null ? m._hp : null,
+  }).catch(function() {});
 }
 
 function fbRemoveUnit(m) {
@@ -4688,7 +4746,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AO';
+const VERSION = '2026-08-22-AP';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
