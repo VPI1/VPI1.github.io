@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: monospace; background: #0d0d0d; }
+    body { font-family: monospace; background: #1c2232; }
     #map { width: 100vw; height: 100vh; }
 
     .soldier-marker {
@@ -32,10 +32,10 @@
 
     #loading {
       position: fixed; inset: 0;
-      background: rgba(5, 8, 15, 0.92);
+      background: rgba(28,34,50,0.95);
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      z-index: 9999; color: #ccc;
+      z-index: 9999; color: #DADAD8;
       gap: 14px;
     }
     #loading-text { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
@@ -50,7 +50,7 @@
 
     #login {
       position: fixed; inset: 0; z-index: 20000;
-      background: #07090f;
+      background: #1a2130;
       display: flex; align-items: center; justify-content: center;
     }
     #login-box {
@@ -58,12 +58,12 @@
       width: 260px;
     }
     #login-title {
-      font-size: 15px; letter-spacing: 5px; color: #aaa; text-transform: uppercase; margin-bottom: 4px;
+      font-size: 15px; letter-spacing: 5px; color: #DADAD8; text-transform: uppercase; margin-bottom: 4px;
     }
     #login-input {
       width: 100%; padding: 10px 14px;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14);
-      border-radius: 4px; color: #ccc; font-family: monospace;
+      background: rgba(50,84,173,0.12); border: 1px solid rgba(50,84,173,0.35);
+      border-radius: 4px; color: #DADAD8; font-family: monospace;
       font-size: 15px; letter-spacing: 3px; outline: none; text-align: center;
     }
     #login-input:focus { border-color: rgba(255,255,255,0.35); }
@@ -73,7 +73,7 @@
       color: #bbb; font-family: monospace; font-size: 12px; letter-spacing: 2px;
       cursor: pointer; text-transform: uppercase;
     }
-    #login-btn:hover { background: rgba(255,255,255,0.13); }
+    #login-btn:hover { background: rgba(50,84,173,0.45); }
     #login-err { font-size: 11px; color: #ef9a9a; letter-spacing: 1px; min-height: 16px; }
 
     .soldier-marker.selected {
@@ -96,35 +96,35 @@
     /* ── Panel ── */
     #unit-panel {
       position:fixed; bottom:0; left:0; width:272px; max-height:64vh;
-      background:#07090f; border-top:1px solid rgba(255,255,255,0.07);
+      background:#1e2638; border-top:1px solid rgba(255,255,255,0.10);
       border-right:1px solid rgba(255,255,255,0.07); border-radius:0 14px 0 0;
-      z-index:1001; display:none; flex-direction:column; font-family:monospace; color:#b8c0d0;
+      z-index:1001; display:none; flex-direction:column; font-family:monospace; color:#DADAD8;
       box-shadow:4px -4px 24px rgba(0,0,0,0.55);
     }
     /* header */
     .ph { display:flex; justify-content:space-between; align-items:flex-start; padding:13px 15px 8px; flex-shrink:0; }
-    .ph-title { font-size:14px; font-weight:700; color:#e8ecf5; letter-spacing:0.3px; }
+    .ph-title { font-size:14px; font-weight:700; color:#DADAD8; letter-spacing:0.3px; }
     .ph-meta { font-size:9px; letter-spacing:1.4px; text-transform:uppercase; margin-top:3px; }
-    .ph-x { background:none; border:none; color:#2a3040; cursor:pointer; font-size:17px; padding:0; line-height:1; transition:color .12s; }
+    .ph-x { background:none; border:none; color:#8090a8; cursor:pointer; font-size:17px; padding:0; line-height:1; transition:color .12s; }
     .ph-x:hover { color:#ef5350; }
     /* stats */
     .pstats { display:flex; flex-wrap:wrap; gap:4px; padding:0 15px 10px; flex-shrink:0; border-bottom:1px solid rgba(255,255,255,0.05); }
-    .pstat { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:7px; padding:5px 9px; min-width:70px; flex:1; }
+    .pstat { background:rgba(50,84,173,0.10); border:1px solid rgba(50,84,173,0.25); border-radius:7px; padding:5px 9px; min-width:70px; flex:1; }
     .pstat.full { flex-basis:100%; }
     .pstat.warn { border-color:rgba(255,87,34,0.35); }
-    .pstat-l { font-size:8px; letter-spacing:0.9px; text-transform:uppercase; color:#3a4555; margin-bottom:2px; }
-    .pstat-v { font-size:13px; font-weight:600; color:#d4dae8; }
+    .pstat-l { font-size:8px; letter-spacing:0.9px; text-transform:uppercase; color:#8a97b0; margin-bottom:2px; }
+    .pstat-v { font-size:13px; font-weight:600; color:#DADAD8; }
     .p-bar { background:rgba(255,255,255,0.06); border-radius:2px; height:2px; margin-top:5px; }
     .p-bar-fill { height:2px; border-radius:2px; transition:width .4s; }
     /* tabs */
     .ptabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.05); flex-shrink:0; }
-    .ptab { flex:1; padding:9px 0; text-align:center; font-size:10px; letter-spacing:1.3px; text-transform:uppercase; color:#5a7898; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s,border-color .15s; font-weight:600; }
-    .ptab:hover { color:#8aaccc; }
-    .ptab.on { color:#90caf9; border-bottom-color:#42a5f5; }
+    .ptab { flex:1; padding:9px 0; text-align:center; font-size:10px; letter-spacing:1.3px; text-transform:uppercase; color:#8a9ab8; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s,border-color .15s; font-weight:600; }
+    .ptab:hover { color:#DADAD8; }
+    .ptab.on { color:#DADAD8; border-bottom-color:#3254AD; }
     /* content */
     .pc { flex:1; overflow-y:auto; padding:11px 15px 16px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.07) transparent; }
     /* section label */
-    .psec { font-size:9px; letter-spacing:1.1px; text-transform:uppercase; color:#7aaccc; font-weight:700; margin:12px 0 5px; }
+    .psec { font-size:9px; letter-spacing:1.1px; text-transform:uppercase; color:#8ab0d0; font-weight:700; margin:12px 0 5px; }
     .psec:first-child { margin-top:0; }
     /* fortification indicator on marker */
     .fort-badge { position:absolute; top:-7px; right:-4px;
@@ -138,9 +138,9 @@
     /* action buttons */
     .pb { display:flex; align-items:center; gap:8px; padding:8px 11px; width:100%;
           background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);
-          border-radius:7px; color:#8a96aa; font-family:monospace; font-size:11px;
+          border-radius:7px; color:#c0c8d8; font-family:monospace; font-size:11px;
           cursor:pointer; text-align:left; transition:background .1s,border-color .1s; margin-bottom:3px; }
-    .pb:hover:not([disabled]) { background:rgba(255,255,255,0.07); border-color:rgba(255,255,255,0.14); color:#c0c8d8; }
+    .pb:hover:not([disabled]) { background:rgba(50,84,173,0.15); border-color:rgba(50,84,173,0.45); color:#DADAD8; }
     .pb[disabled] { opacity:0.22; cursor:default; }
     .pb-ic { font-size:10px; width:13px; text-align:center; flex-shrink:0; opacity:0.6; }
     .pb.atk { border-color:rgba(239,83,80,0.22); color:#ef9a9a; }
@@ -152,45 +152,45 @@
     .pb.lit { border-color:rgba(255,193,7,0.2); color:#ffd54f; }
     .pb.lit:hover:not([disabled]) { background:rgba(255,193,7,0.06); }
     .pb.on { background:rgba(239,83,80,0.1); border-color:rgba(239,83,80,0.45); color:#ef9a9a; }
-    .pb-note { font-size:10px; color:#2e3a4a; padding:2px 2px 5px; line-height:1.5; }
+    .pb-note { font-size:10px; color:#8090a8; padding:2px 2px 5px; line-height:1.5; }
     /* move row */
-    .pmove { display:flex; align-items:center; gap:7px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.06); border-radius:7px; padding:7px 10px; margin-bottom:5px; }
-    .pmove-n { font-weight:700; font-size:15px; color:#e8ecf5; min-width:22px; text-align:center; }
-    .pmove-l { flex:1; font-size:9px; color:#2e3a4a; }
+    .pmove { display:flex; align-items:center; gap:7px; background:rgba(50,84,173,0.08); border:1px solid rgba(50,84,173,0.2); border-radius:7px; padding:7px 10px; margin-bottom:5px; }
+    .pmove-n { font-weight:700; font-size:15px; color:#DADAD8; min-width:22px; text-align:center; }
+    .pmove-l { flex:1; font-size:9px; color:#8090a8; }
     .padj { width:24px; height:24px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); border-radius:5px; color:#667; font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .1s; }
     .padj:hover { background:rgba(255,255,255,0.12); color:#bbb; }
     /* soldier list */
     .sol-list { display:flex; flex-direction:column; gap:2px; margin-bottom:6px; }
-    .sol-row { display:flex; justify-content:space-between; padding:4px 9px; border-radius:5px; cursor:pointer; font-size:10px; background:rgba(255,255,255,0.025); border:1px solid transparent; transition:background .1s; color:#566070; }
-    .sol-row:hover { background:rgba(255,255,255,0.06); color:#8a96aa; }
+    .sol-row { display:flex; justify-content:space-between; padding:4px 9px; border-radius:5px; cursor:pointer; font-size:10px; background:rgba(50,84,173,0.07); border:1px solid transparent; transition:background .1s; color:#9aa5bc; }
+    .sol-row:hover { background:rgba(50,84,173,0.15); color:#DADAD8; }
     .sol-row.sel { background:rgba(255,193,7,0.08); border-color:rgba(255,193,7,0.28); color:#ffd54f; }
     /* conditions */
-    .cond-card { display:flex; gap:10px; align-items:flex-start; padding:9px 11px; border:1px solid rgba(255,255,255,0.06); border-radius:7px; margin-bottom:4px; cursor:pointer; transition:background .1s; background:rgba(255,255,255,0.02); }
-    .cond-card:hover { background:rgba(255,255,255,0.04); }
-    .cond-card input[type=checkbox] { accent-color:#42a5f5; cursor:pointer; margin-top:1px; flex-shrink:0; }
-    .cond-title { font-size:11px; color:#a0acbc; font-weight:600; }
-    .cond-desc { font-size:9px; color:#3a4555; margin-top:2px; line-height:1.45; }
+    .cond-card { display:flex; gap:10px; align-items:flex-start; padding:9px 11px; border:1px solid rgba(50,84,173,0.2); border-radius:7px; margin-bottom:4px; cursor:pointer; transition:background .1s; background:rgba(50,84,173,0.05); }
+    .cond-card:hover { background:rgba(50,84,173,0.12); }
+    .cond-card input[type=checkbox] { accent-color:#3254AD; cursor:pointer; margin-top:1px; flex-shrink:0; }
+    .cond-title { font-size:11px; color:#DADAD8; font-weight:600; }
+    .cond-desc { font-size:9px; color:#8090a8; margin-top:2px; line-height:1.45; }
     /* log */
     .log-row { display:flex; gap:8px; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.035); }
-    .log-t { font-size:9px; color:#2e3a4a; flex-shrink:0; font-variant-numeric:tabular-nums; }
-    .log-msg { font-size:10px; color:#667; line-height:1.4; }
-    .dep-role-btn { background:#1a2030; color:#ccc; border:1px solid #30363d; border-radius:4px; padding:3px 7px; font-size:10px; cursor:pointer; }
-    .dep-role-btn:hover { background:#2a3448; color:#fff; }
-    #dep-picker { display:none; position:fixed; bottom:58px; right:14px; z-index:9100; background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:7px; flex-wrap:wrap; gap:3px; max-width:200px; box-shadow:0 2px 8px #000a; }
+    .log-t { font-size:9px; color:#8090a8; flex-shrink:0; font-variant-numeric:tabular-nums; }
+    .log-msg { font-size:10px; color:#a8b2c4; line-height:1.4; }
+    .dep-role-btn { background:#232d42; color:#DADAD8; border:1px solid #3254AD; border-radius:4px; padding:3px 7px; font-size:10px; cursor:pointer; }
+    .dep-role-btn:hover { background:#3254AD; color:#fff; }
+    #dep-picker { display:none; position:fixed; bottom:58px; right:14px; z-index:9100; background:#1e2638; border:1px solid rgba(50,84,173,0.45); border-radius:6px; padding:7px; flex-wrap:wrap; gap:3px; max-width:200px; box-shadow:0 2px 8px #000a; }
     /* toolbar */
     #toolbar { position:fixed; bottom:14px; right:14px; z-index:9000; display:flex; gap:3px;
-      background:rgba(7,9,15,0.9); border:1px solid rgba(255,255,255,0.09); border-radius:9px; padding:4px; }
-    .tb-btn { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:6px; padding:6px 10px; cursor:pointer; font-size:13px; transition:background .1s; color:#556; font-family:monospace; }
-    .tb-btn:hover { background:rgba(255,255,255,0.09); color:#aaa; }
-    .tb-btn.active { background:rgba(38,198,218,0.12); border-color:rgba(38,198,218,0.4); color:#26c6da; }
+      background:rgba(30,38,56,0.96); border:1px solid rgba(50,84,173,0.35); border-radius:9px; padding:4px; }
+    .tb-btn { background:rgba(50,84,173,0.08); border:1px solid rgba(50,84,173,0.2); border-radius:6px; padding:6px 10px; cursor:pointer; font-size:13px; transition:background .1s; color:#a0aabb; font-family:monospace; }
+    .tb-btn:hover { background:rgba(50,84,173,0.25); color:#DADAD8; }
+    .tb-btn.active { background:rgba(50,84,173,0.30); border-color:#3254AD; color:#DADAD8; }
     .tb-btn.ruler-on { background:rgba(255,213,79,0.12); border-color:rgba(255,213,79,0.4); color:#ffd54f; }
     /* annotate toolbar */
     #annotate-toolbar { position:fixed; right:14px; bottom:58px; z-index:9000; display:none;
-      background:rgba(7,9,15,0.93); border:1px solid rgba(255,255,255,0.09);
+      background:rgba(30,38,56,0.96); border:1px solid rgba(50,84,173,0.35);
       border-radius:9px; padding:7px 9px; gap:4px; flex-direction:column; min-width:130px; }
     #annotate-toolbar.show { display:flex; }
-    .ann-btn { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); color:#778; font-size:11px; padding:5px 9px; border-radius:5px; cursor:pointer; white-space:nowrap; transition:background .1s; font-family:monospace; }
-    .ann-btn:hover { background:rgba(255,255,255,0.1); color:#bbb; }
+    .ann-btn { background:rgba(50,84,173,0.08); border:1px solid rgba(50,84,173,0.2); color:#a8b4c8; font-size:11px; padding:5px 9px; border-radius:5px; cursor:pointer; white-space:nowrap; transition:background .1s; font-family:monospace; }
+    .ann-btn:hover { background:rgba(50,84,173,0.25); color:#DADAD8; }
     .ann-btn.active { background:rgba(129,199,132,0.15); border-color:rgba(129,199,132,0.4); color:#81c784; }
     .ann-color-swatch { width:15px; height:15px; border-radius:3px; cursor:pointer; border:2px solid transparent; flex-shrink:0; }
     .ann-color-swatch.active-swatch { border-color:#fff; }
@@ -198,7 +198,7 @@
     .ruler-chip { background:rgba(7,9,15,0.92); border:1px solid #ffd54f; color:#ffd54f; font-size:11px; font-family:monospace; padding:3px 10px; border-radius:4px; white-space:nowrap; pointer-events:none; display:inline-block; position:absolute; left:50%; transform:translateX(-50%); box-shadow:0 2px 8px rgba(0,0,0,0.6); }
     /* toasts */
     #toast-area { position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:20000; display:flex; flex-direction:column; align-items:center; gap:6px; pointer-events:none; }
-    .toast { background:rgba(7,9,15,0.94); border:1px solid rgba(255,255,255,0.1); border-radius:20px; padding:7px 18px; font-size:12px; font-family:monospace; letter-spacing:.4px; animation:toastIn .2s ease; }
+    .toast { background:rgba(30,38,56,0.97); border:1px solid rgba(50,84,173,0.4); border-radius:20px; padding:7px 18px; font-size:12px; font-family:monospace; letter-spacing:.4px; animation:toastIn .2s ease; }
     /* drone tooltips */
     .fpv-eta-tip { background:rgba(7,9,15,0.88)!important; border:1px solid #ef5350!important; color:#ef9a9a!important; font-size:10px!important; font-family:monospace!important; padding:2px 6px!important; border-radius:4px!important; white-space:nowrap; }
     .fpv-eta-tip::before { display:none!important; }
@@ -287,9 +287,9 @@ function loadFirebaseSDK(cb) {
 <div id="unit-panel"></div>
 <div id="toast-area"></div>
 <div id="weather-widget">Loading weather…</div>
-<div id="clock-widget" style="position:fixed;top:38px;right:10px;z-index:9000;background:rgba(8,10,18,0.88);color:#ccc;padding:4px 12px;border-radius:20px;font-size:11px;border:1px solid rgba(255,255,255,0.12);font-family:monospace;white-space:nowrap;user-select:none;letter-spacing:0.3px;"></div>
+<div id="clock-widget" style="position:fixed;top:38px;right:10px;z-index:9000;background:rgba(30,38,56,0.94);color:#DADAD8;padding:4px 12px;border-radius:20px;font-size:11px;border:1px solid rgba(50,84,173,0.35);font-family:monospace;white-space:nowrap;user-select:none;letter-spacing:0.3px;"></div>
 <div id="dep-picker"></div>
-<div id="version-badge" style="position:fixed;bottom:14px;left:14px;z-index:9000;font-family:monospace;font-size:10px;color:#555;pointer-events:none"></div>
+<div id="version-badge" style="position:fixed;bottom:14px;left:14px;z-index:9000;font-family:monospace;font-size:10px;color:#8090a8;pointer-events:none"></div>
 <div id="toolbar">
   <button class="tb-btn" id="dep-btn" onclick="enterPlaceDeployPoint()" title="Place deployment point">⚑</button>
   <button class="tb-btn" id="ruler-btn" title="Measure distances">⊾</button>
@@ -435,13 +435,17 @@ const elevationLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}
   attribution: '&copy; OpenTopoMap contributors', maxZoom: 17, opacity: 0.92,
   subdomains: 'abc'
 });
-// mapMode: 'hybrid' | 'satellite' | 'elevation'
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
+  subdomains: 'abc'
+});
+// mapMode: 'hybrid' | 'satellite' | 'elevation' | 'osm'
 let mapMode = 'hybrid';
 hybridLayer.addTo(map);
 
-const MAP_MODES = ['hybrid', 'satellite', 'elevation'];
-const MAP_MODE_LABELS = { hybrid: '🗺 HYB', satellite: '🛰 SAT', elevation: '⛰ ELV' };
-const MAP_MODE_LAYERS = { hybrid: hybridLayer, satellite: satelliteLayer, elevation: elevationLayer };
+const MAP_MODES = ['hybrid', 'satellite', 'elevation', 'osm'];
+const MAP_MODE_LABELS = { hybrid: '🗺 HYB', satellite: '🛰 SAT', elevation: '⛰ ELV', osm: '🗺 OSM' };
+const MAP_MODE_LAYERS = { hybrid: hybridLayer, satellite: satelliteLayer, elevation: elevationLayer, osm: osmLayer };
 
 function cycleMapMode() {
   const prev = mapMode;
@@ -450,9 +454,9 @@ function cycleMapMode() {
   MAP_MODE_LAYERS[mapMode].addTo(map);
   document.getElementById('elev-btn').textContent = MAP_MODE_LABELS[mapMode];
   document.getElementById('elev-btn').classList.toggle('ruler-on', mapMode === 'elevation');
-  // Boundary contrast: dark dashed on elevation, white on satellite/hybrid
-  const isElev = mapMode === 'elevation';
-  gameBoundaryLayer.setStyle({ color: isElev ? '#222' : '#e0e0e0', opacity: isElev ? 0.9 : 0.75 });
+  // Boundary contrast: dark dashed on elevation/OSM, white on satellite/hybrid
+  const isLight = mapMode === 'elevation' || mapMode === 'osm';
+  gameBoundaryLayer.setStyle({ color: isLight ? '#222' : '#e0e0e0', opacity: isLight ? 0.9 : 0.75 });
 }
 // legacy alias used by the ⛰ button onclick
 function toggleElevationMap() { cycleMapMode(); }
@@ -4461,13 +4465,8 @@ function initFirebase() {
           lat: d.fromLat, lng: d.fromLng, dstLat: d.toLat, dstLng: d.toLng, remote: true });
       });
 
-      // Clear stale own-side data, push fresh state atomically
-      _fbDb.ref('units_' + userSide).remove().then(function() {
-        fbPushMySide();
-      }).catch(function(e) {
-        _syncLog('clear err: ' + e.message);
-        fbPushMySide();
-      });
+      // Push own units immediately — set() is atomic and overwrites stale data
+      fbPushMySide();
 
       // Heartbeat every 2s
       setInterval(function() { fbPushMySide(); }, 2000);
@@ -4581,7 +4580,7 @@ function fbApplyUnit(d) {
       existing.setIcon(soldierIcon(existing._side, d.count, existing._role));
     }
     if (d.fortLevel != null) { existing._fortLevel = d.fortLevel; updateFortBadge(existing); }
-    if (d.ammo != null) existing._ammo = d.ammo;
+    if (d.ammo != null) existing._ammo = (existing._maxAmmo != null) ? Math.min(d.ammo, existing._maxAmmo) : d.ammo;
     if (d.hp != null) existing._hp = d.hp;
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
@@ -4746,7 +4745,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AP';
+const VERSION = '2026-08-22-AQ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -4870,8 +4869,8 @@ function tdpSpawn(dp, now) {
       const newSols = randomComposition(spawnCount);
       atTDP._soldiers.push(...newSols);
       atTDP._soldiers = atTDP._soldiers.map((s, i) => ({ ...s, id: i })); // keep IDs unique
-      atTDP._ammo    += newSols.reduce((s, sol) => s + sol.ammo, 0);
       atTDP._maxAmmo += newSols.reduce((s, sol) => s + SOLDIER_ROLES[sol.role].ammo, 0);
+      atTDP._ammo    = Math.min(atTDP._ammo + newSols.reduce((s, sol) => s + sol.ammo, 0), atTDP._maxAmmo);
     } else {
       atTDP._ammo    = Math.min((atTDP._ammo ?? 0) + spawnCount * 8, atTDP._maxAmmo ?? 999);
     }
@@ -4904,8 +4903,8 @@ function mergeUnits(a, b) {
   fbRemoveUnit(a); fbRemoveUnit(b);
   const merged = createMarker(keepPos, a._side, newCount, a._role);
   // Combine ammo
-  merged._ammo    = (a._ammo ?? 0) + (b._ammo ?? 0);
   merged._maxAmmo = (a._maxAmmo ?? 0) + (b._maxAmmo ?? 0);
+  merged._ammo    = Math.min((a._ammo ?? 0) + (b._ammo ?? 0), merged._maxAmmo || 999);
   if (a._soldiers && b._soldiers) {
     merged._soldiers = [...a._soldiers, ...b._soldiers].map((s, i) => ({ ...s, id: i }));
   }
