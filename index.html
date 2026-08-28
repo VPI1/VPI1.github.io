@@ -4446,8 +4446,10 @@ function fbPushMySide() {
         hp: m._hp != null ? m._hp : null,
       };
     }
-    // update() merges — teammates on same side won't overwrite each other
-    _fbDb.ref('units_' + userSide).update(updates).catch(function(e) { console.warn('FB push error:', e); });
+    // Individual set() per unit — works under child-level Firebase rules
+    for (var uid in updates) {
+      _fbDb.ref('units_' + userSide + '/' + uid).set(updates[uid]).catch(function(e) { console.warn('FB push error:', e); });
+    }
   }, 80);
 }
 
@@ -4691,7 +4693,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AK';
+const VERSION = '2026-08-22-AL';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
