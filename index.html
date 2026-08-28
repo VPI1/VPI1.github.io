@@ -4373,6 +4373,14 @@ let _fbDb = null;
 function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || FB_DEFAULT_CFG; } catch { return FB_DEFAULT_CFG; } }
 function setFBConfig(c) { localStorage.setItem(FB_KEY, JSON.stringify(c)); }
 
+// ── Sync debug log (visible in-map) ───────────────────────────────────────
+function _syncLog(msg) {
+  var el = document.getElementById('sync-log');
+  if (!el) return;
+  var t = new Date().toTimeString().slice(0,8);
+  el.textContent = t + ' ' + msg;
+}
+
 function initFirebase() {
   const cfg = getFBConfig();
   if (!cfg.databaseURL) return;
@@ -4381,10 +4389,20 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
 
-      // Listen to BOTH sides so teammates and opponents sync in real-time.
+      // Show connection state
+      _fbDb.ref('.info/connected').on('value', function(snap) {
+        _syncLog(snap.val() ? 'connected ✓' : 'disconnected ✗');
+      });
+
+      // Listen to BOTH sides
       ['units_blue', 'units_red'].forEach(function(path) {
         _fbDb.ref(path).on('value', function(snap) {
-          fbApplySideSnapshot(path.replace('units_', ''), snap.val() || {});
+          var side = path.replace('units_', '');
+          var all = snap.val() || {};
+          var n = Object.keys(all).length;
+          var remote = Object.values(all).filter(function(d) { return d && d.clientId !== _fbClientId; }).length;
+          _syncLog('rcv ' + side + ': ' + n + ' total, ' + remote + ' remote');
+          fbApplySideSnapshot(side, all);
         });
       });
 
@@ -4403,18 +4421,22 @@ function initFirebase() {
         }
       });
 
-      // Clear own-side stale data, then push fresh current state atomically.
-      // One atomic set() means Firebase fires on('value') exactly once with all units —
-      // no partial-snapshot race condition.
+      // Clear stale own-side data, push fresh state atomically
       _fbDb.ref('units_' + userSide).remove().then(function() {
+        fbPushMySide();
+      }).catch(function(e) {
+        _syncLog('clear err: ' + e.message);
         fbPushMySide();
       });
 
-      // Heartbeat: re-push own side every 2s so moving units stay synced
+      // Heartbeat every 2s
       setInterval(function() { fbPushMySide(); }, 2000);
 
       showToast('Multiplayer connected', '#66bb6a');
-    } catch(e) { console.warn('Firebase init error:', e); }
+    } catch(e) {
+      console.warn('Firebase init error:', e);
+      _syncLog('init err: ' + e.message);
+    }
   });
 }
 
@@ -4440,9 +4462,11 @@ function fbPushMySide() {
         hp: m._hp != null ? m._hp : null,
       };
     }
-    // Atomic set on parent — one write, one snapshot, no race condition.
-    // Requires ".write": true at root (not just child-level rules).
-    _fbDb.ref('units_' + userSide).set(updates).catch(function(e) {
+    var n = Object.keys(updates).length;
+    _fbDb.ref('units_' + userSide).set(updates).then(function() {
+      _syncLog('pushed ' + userSide + ': ' + n + ' units');
+    }).catch(function(e) {
+      _syncLog('push ERR: ' + e.message);
       console.warn('FB push error:', e);
     });
   }, 80);
@@ -4455,20 +4479,16 @@ function fbSyncUnit(m) {
 
 function fbRemoveUnit(m) {
   if (!_fbDb || !m._uid || m._side !== userSide) return;
-  // Remove the specific unit from Firebase, then re-push remaining units atomically
   _fbDb.ref('units_' + userSide + '/' + m._uid).remove().catch(function() {});
 }
 
-// Apply a full-side snapshot from Firebase.
-// ONLY adds/updates units from other clients — never deletes.
-// Units are removed only via explicit fbRemoveUnit() calls.
 function fbApplySideSnapshot(side, all) {
   if (!userSide) return;
   for (var uid in all) {
     var d = all[uid];
     if (!d || !d.uid) continue;
-    if (d.clientId === _fbClientId) continue; // skip own echoes
-    if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue; // skip stale pre-reset data
+    if (d.clientId === _fbClientId) continue;
+    if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue;
     fbApplyUnit(d);
   }
 }
@@ -4668,7 +4688,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AN';
+const VERSION = '2026-08-22-AO';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5580,5 +5600,6 @@ function showError(msg) {
 }
 
 </script>
+<div id="sync-log" style="position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.7);color:#0f0;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
 </body>
 </html>
