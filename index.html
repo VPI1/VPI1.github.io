@@ -3887,7 +3887,10 @@ function rebuildLine(state) {
   const ll = state.marker.getLatLng();
   const pts = [[ll.lat, ll.lng], ...state.route.slice(state.seg + 1)];
   if (state.line) { state.line.setLatLngs(pts); }
-  else { state.line = L.polyline(pts, { color: '#ff9500', weight: 3, dashArray: '10 6', opacity: 0.95 }).addTo(map); }
+  else {
+    const _rlOp = (state.marker._side !== userSide && !_adminAuthed && !(state.marker._spottedUntil > Date.now())) ? 0 : 0.95;
+    state.line = L.polyline(pts, { color: '#ff9500', weight: 3, dashArray: '10 6', opacity: _rlOp }).addTo(map);
+  }
 }
 
 function rebuildSplits(state) {
@@ -4768,7 +4771,8 @@ function fbApplyUnit(d) {
         movingMarkers.delete(existing);
       }
       existing.setLatLng(d.route[0]);
-      var rLine = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map);
+      var _rLineOp = (existing._side !== userSide && !_adminAuthed && !(existing._spottedUntil > Date.now())) ? 0 : 0.95;
+      var rLine = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLineOp}).addTo(map);
       movingMarkers.set(existing, {marker:existing, route:d.route, seg:0, t:0, line:rLine, vertices:[], splits:[]});
       existing.dragging.disable();
     } else {
@@ -4797,7 +4801,8 @@ function fbApplyUnit(d) {
     if (d.ammo != null) m2._ammo = d.ammo;
     if (d.hp != null) m2._hp = d.hp;
     if (d.route && d.route.length >= 2) {
-      var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map);
+      var _rLine2Op = (m2._side !== userSide && !_adminAuthed && !(m2._spottedUntil > Date.now())) ? 0 : 0.95;
+      var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine2Op}).addTo(map);
       movingMarkers.set(m2, {marker:m2, route:d.route, seg:0, t:0, line:rLine2, vertices:[], splits:[]});
       m2.dragging.disable();
     }
@@ -4975,7 +4980,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AY';
+const VERSION = '2026-08-22-AZ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
