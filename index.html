@@ -2085,15 +2085,20 @@ function _buildActTab(m, now, moving) {
       }
     }
     const inFight = activeFights.has(m);
+    const _incomingFight = [...activeFights.entries()].find(([,f]) => f.defender === m);
     const rangeM = unitRangeM(m);
     h += `<div class="psec">Combat</div>`;
     if (inFight) {
       const def = activeFights.get(m).defender;
-      h += _pb(`Disengage (vs ${ROLES[def._role]?.label??'enemy'})`, '⊕', 'atk on', "_pa('attack')");
+      h += _pb(`Cease Fire (attacking ${ROLES[def._role]?.label??'enemy'})`, '⬛', 'atk on', "_pa('disengage')");
     } else {
       const rangeKmStr = (rangeM/1000).toFixed(2) + ' km';
       const en = findEnemiesInRange(m, rangeM/1000).filter(e => e._spottedUntil > now);
       h += _pb(`Attack · ${rangeKmStr}${en.length?` · ${en.length} visible`:' · none visible'}`, '⊕', 'atk', "_pa('attack')", !(m._ammo>0&&en.length));
+    }
+    if (_incomingFight) {
+      const [atk] = _incomingFight;
+      h += _pb(`Cease Fire (defending vs ${ROLES[atk._role]?.label??'enemy'})`, '⬛', 'atk on', "_pa('disengage-def')");
     }
     const supRangeKm = (unitRangeM(m)/1000).toFixed(2) + ' km';
     const supEn = findEnemiesInRange(m, unitRangeM(m)/1000).filter(e => e._spottedUntil > now);
@@ -2455,6 +2460,16 @@ window._pa = function(action) {
   else if (action === 'area-suppress') { cancelDraw(); enterAreaSuppressMode(m); }
   else if (action === 'grenade')     { cancelDraw(); doGrenade(m); }
   else if (action === 'move-sel')    { cancelDraw(); moveSoldierSubset(m); }
+  else if (action === 'disengage') {
+    // Attacker voluntarily stops the fight
+    endFight(m);
+    showToast('Ceased fire.', '#90caf9');
+  }
+  else if (action === 'disengage-def') {
+    // Defender breaks off — end the fight that's targeting this unit
+    const _inc = [...activeFights.entries()].find(([,f]) => f.defender === m);
+    if (_inc) { endFight(_inc[0]); showToast('Broke off engagement.', '#90caf9'); }
+  }
   else if (action === 'attack-sel') {
     cancelDraw();
     m._engagedSoldierIds = new Set(m._selectedSoldierIds);
@@ -2780,7 +2795,18 @@ function doInfantryAttack(attacker) {
     .filter(e => e._spottedUntil > Date.now())
     .sort((a,b) => segMeters(markerPos(attacker), markerPos(a)) - segMeters(markerPos(attacker), markerPos(b)));
   if (!enemies.length || attacker._ammo <= 0) { showToast('No spotted enemies in range or no ammo.', '#888'); return; }
-  startFight(attacker, enemies[0]);
+  if (enemies.length === 1) {
+    startFight(attacker, enemies[0]);
+    return;
+  }
+  // Multiple targets — enter click-to-pick mode (same pattern as suppress)
+  enterCombatMode('attack-pick', attacker, rangeKm, '#ef5350');
+  enemies.forEach(enemy => {
+    const h = (e) => { L.DomEvent.stopPropagation(e); startFight(attacker, enemy); exitCombatMode(); };
+    enemy.on('click', h); combatTargetHandlers.push({ m: enemy, h });
+  });
+  setStatus(`Attack: click target within ${Math.round(rangeKm*1000)}m (${enemies.length} spotted) — Esc to cancel`);
+  closePanel();
 }
 
 // ── advanced tactics ─────────────────────────────────────────
@@ -4284,6 +4310,9 @@ setInterval(() => {
     m._wasSpotted = spotted;
     const el = m.getElement();
     if (el) el.style.display = spotted ? '' : 'none';
+    // Also hide/show route line so enemy movement intent stays hidden
+    const _mvSt = movingMarkers.get(m);
+    if (_mvSt?.line) _mvSt.line.setStyle({ opacity: spotted ? 0.95 : 0 });
     if (spotted) {
       m._lastKnownPos = markerPos(m);
       removeGhost(m);
@@ -4946,7 +4975,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AX';
+const VERSION = '2026-08-22-AY';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
