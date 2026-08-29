@@ -821,8 +821,8 @@ function soldierIcon(side, count, role = '') {
 }
 
 // ── globals ───────────────────────────────────────────────────
-const TIME_SCALE = 20;
-const WALK_MS = 1.111 * TIME_SCALE;
+let TIME_SCALE = 20;  // controlled by admin speed slider
+Object.defineProperty(window, 'WALK_MS', { get: () => 1.111 * TIME_SCALE, configurable: true });
 
 // ── terrain polygons (populated after OSM load) ───────────────
 let terrainPolys = []; // [{ ring, urban }]  urban=true→village/buildings, false→forest
@@ -1904,30 +1904,32 @@ function showPanelRange(m) {
   clearPanelRange();
   const rangeKm = unitDisplayRangeKm(m);
   const maxKm   = unitMaxRangeKm(m);
-  const roleColors = { infantry:'#42a5f5', fpv:'#ef5350', artillery:'#ff9800', mortar:'#ffd54f', mavic:'#26c6da' };
+  const roleColors = { infantry:'#42a5f5', fpv:'#ff5252', artillery:'#ff9800', mortar:'#ffd54f', mavic:'#00e5ff' };
   const color = roleColors[m._role] ?? '#fff';
+  // Inner effective-range circle — solid, clearly visible
   if (rangeKm) {
     panelRangeCircle = L.circle(m.getLatLng(), {
       radius: rangeKm * 1000, color, fill: true, fillColor: color,
-      fillOpacity: 0.05, weight: 1.5, opacity: 0.7, dashArray: '6 4'
+      fillOpacity: 0.12, weight: 2.5, opacity: 0.9, dashArray: '8 5'
     }).addTo(map);
   }
+  // Outer max-range ring — thinner, dashed, still clearly visible
   if (maxKm && maxKm * 1000 > (rangeKm ?? 0) * 1000 + 50) {
     panelRangeCircleMax = L.circle(m.getLatLng(), {
       radius: maxKm * 1000, color, fill: false,
-      weight: 1, opacity: 0.35, dashArray: '4 8'
+      weight: 2, opacity: 0.55, dashArray: '5 10'
     }).addTo(map);
   }
-  // Radio horizon circle for FPV and mavic
+  // Radio horizon — dotted outermost ring
   if (m._role === 'fpv') {
     panelHorizonCircle = L.circle(m.getLatLng(), {
-      radius: FPV_RADIO_HORIZON_M, color: '#ef5350', fill: true,
-      fillColor: '#ef5350', fillOpacity: 0.03, weight: 1, opacity: 0.4, dashArray: '2 8'
+      radius: FPV_RADIO_HORIZON_M, color: '#ff5252', fill: true,
+      fillColor: '#ff5252', fillOpacity: 0.06, weight: 1.5, opacity: 0.55, dashArray: '3 9'
     }).addTo(map);
   } else if (m._role === 'mavic') {
     panelHorizonCircle = L.circle(m.getLatLng(), {
-      radius: MAVIC_CTRL_HORIZON_M, color: '#26c6da', fill: true,
-      fillColor: '#26c6da', fillOpacity: 0.03, weight: 1, opacity: 0.35, dashArray: '2 8'
+      radius: MAVIC_CTRL_HORIZON_M, color: '#00e5ff', fill: true,
+      fillColor: '#00e5ff', fillOpacity: 0.06, weight: 1.5, opacity: 0.5, dashArray: '3 9'
     }).addTo(map);
   }
 }
@@ -3369,7 +3371,7 @@ function applyFPVImpact(pilot, target, intercepted) {
 
 // ── Mavic drone ───────────────────────────────────────────────
 const flyingMavics = [];
-const MAVIC_SPD = 13.9 * TIME_SCALE;
+Object.defineProperty(window, 'MAVIC_SPD', { get: () => 13.9 * TIME_SCALE, configurable: true });
 // MAVIC_SCAN_SEC removed — hover time is now battery-derived per mission
 
 function mavicDroneIcon() {
@@ -4629,8 +4631,9 @@ function fbPushMySide() {
 }
 
 function fbSyncUnit(m) {
-  if (!_fbDb || !m._uid || m._side !== userSide) return;
-  fbPushMySide();
+  if (!_fbDb || !m._uid) return;
+  if (!_adminAuthed && m._side !== userSide) return;
+  if (_adminAuthed) { fbSyncAnyUnit(m); } else { fbPushMySide(); }
 }
 
 // Push any unit (including enemy side) to Firebase immediately after damage.
@@ -4657,11 +4660,11 @@ function fbRemoveUnit(m) {
 }
 
 function fbApplySideSnapshot(side, all) {
-  if (!userSide) return;
+  if (!userSide && !_adminAuthed) return;
   for (var uid in all) {
     var d = all[uid];
     if (!d || !d.uid) continue;
-    if (d.clientId === _fbClientId) continue;
+    if (!_adminAuthed && d.clientId === _fbClientId) continue;
     if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue;
     fbApplyUnit(d);
   }
@@ -4724,6 +4727,18 @@ const ADMIN_PASSWORD = '6PuaV6X4';
 let _adminAuthed  = false;
 let _adminPlacing = false;
 
+// Update TIME_SCALE and restart all active fight intervals immediately
+function setGameSpeed(x) {
+  TIME_SCALE = Math.max(1, Math.min(100, x));
+  // Restart fight intervals so they respect the new speed
+  for (const [attacker, fight] of activeFights) {
+    clearInterval(fight.intervalId);
+    fight.intervalId = setInterval(() => fightTick(attacker, fight.defender), 8000 / TIME_SCALE);
+  }
+  const lbl = document.getElementById('adm-speed-lbl');
+  if (lbl) lbl.textContent = TIME_SCALE + 'x';
+}
+
 function openAdminPanel() {
   if (!_adminAuthed) {
     const pw = prompt('Admin password:');
@@ -4765,6 +4780,16 @@ function _renderAdminPanel() {
         <input id="adm-count" type="number" min="1" max="9" value="3" style="width:38px;background:#1e1e3a;color:#eee;border:1px solid #444;border-radius:3px;padding:3px 4px;font-size:11px;text-align:center">
       </div>
       <button id="adm-place-btn" onclick="adminTogglePlacing()" style="width:100%;background:#1a237e;color:#eee;border:1px solid #3949ab;border-radius:4px;padding:5px;cursor:pointer;font-size:11px">+ Place unit on map</button>
+    </div>
+    <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #2a2a4a">
+      <div style="color:#aaa;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.5px">Game speed</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input id="adm-speed-slider" type="range" min="1" max="100" value="${TIME_SCALE}"
+          oninput="setGameSpeed(+this.value)"
+          style="flex:1;accent-color:#ffd54f;cursor:pointer">
+        <span id="adm-speed-lbl" style="color:#ffd54f;font-weight:700;min-width:36px;text-align:right">${TIME_SCALE}x</span>
+      </div>
+      <div style="color:#555;font-size:9px;margin-top:3px">1x = real time · 20x = default · 100x = max</div>
     </div>
     <div style="color:#aaa;margin-bottom:5px;font-size:10px;text-transform:uppercase;letter-spacing:.5px">All units (<span id="adm-unit-count">0</span>)</div>
     <div id="adm-unit-list"></div>`;
@@ -4862,7 +4887,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AS';
+const VERSION = '2026-08-22-AT';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
