@@ -29,6 +29,8 @@
     }
     .blue-marker { background: radial-gradient(circle at 35% 35%, #42a5f5, #0d47a1); border: 2px solid #90caf9; }
     .red-marker  { background: radial-gradient(circle at 35% 35%, #ef5350, #7f0000); border: 2px solid #ef9a9a; }
+    /* Admin mode: force all unit markers visible regardless of fog-of-war */
+    body.admin-mode .leaflet-marker-icon { display: block !important; }
 
     #loading {
       position: fixed; inset: 0;
@@ -504,10 +506,14 @@ async function fetchAndExtractTerrain(bbox, q) {
   try {
     const raw = localStorage.getItem(cacheKey);
     if (raw) {
+      // Yield two frames BEFORE the blocking JSON.parse so loading screen paints
+      document.getElementById('loading-text').textContent = 'Loading terrain from cache…';
+      await new Promise(r => requestAnimationFrame(r));
+      await new Promise(r => requestAnimationFrame(r));
       const cached = JSON.parse(raw);
       if (cached.ts && Date.now() - cached.ts < OVERPASS_CACHE_TTL) {
-        document.getElementById('loading-text').textContent = 'Loaded terrain from cache…';
-        await new Promise(r => setTimeout(r, 0)); // yield so browser can paint
+        document.getElementById('loading-text').textContent = 'Terrain ready.';
+        await new Promise(r => requestAnimationFrame(r));
         return cached.ext;
       }
     }
@@ -534,7 +540,8 @@ async function fetchAndExtractTerrain(bbox, q) {
 
   // ── 3. Extract & yield before CPU-heavy step ──
   document.getElementById('loading-text').textContent = 'Processing terrain…';
-  await new Promise(r => setTimeout(r, 0));
+  await new Promise(r => requestAnimationFrame(r));
+  await new Promise(r => requestAnimationFrame(r));
 
   const ext = {
     anchors: extractUrbanAnchors(data),
@@ -4270,13 +4277,8 @@ setInterval(() => {
       }
       continue; // own units always visible, skip display logic
     }
-    // Enemy unit visibility — admin sees all
-    if (_adminAuthed) {
-      const el2 = m.getElement();
-      if (el2) el2.style.display = '';
-      removeGhost(m);
-      continue;
-    }
+    // Enemy unit visibility — admin sees all (body.admin-mode CSS handles display)
+    if (_adminAuthed) { removeGhost(m); continue; }
     const spotted = m._spottedUntil > now;
     const wasSpotted = m._wasSpotted || false;
     m._wasSpotted = spotted;
@@ -4805,11 +4807,7 @@ function openAdminPanel() {
   const existing = document.getElementById('admin-panel');
   if (existing) { existing.remove(); _adminStopPlacing(); return; }
   _renderAdminPanel();
-  // Immediately reveal all enemy markers now that admin is authenticated
-  for (const m of allMarkers) {
-    const el = m.getElement();
-    if (el) el.style.display = '';
-  }
+  document.body.classList.add('admin-mode');  // CSS override reveals all markers
 }
 
 function _adminStopPlacing() {
@@ -4948,7 +4946,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AW';
+const VERSION = '2026-08-22-AX';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
