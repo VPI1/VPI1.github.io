@@ -301,8 +301,14 @@ function loadFirebaseSDK(cb) {
 <div id="clock-widget" style="position:fixed;top:38px;right:10px;z-index:9000;background:rgba(30,38,56,0.94);color:#DADAD8;padding:4px 12px;border-radius:20px;font-size:11px;border:1px solid rgba(50,84,173,0.35);font-family:monospace;white-space:nowrap;user-select:none;letter-spacing:0.3px;"></div>
 <div id="dep-picker"></div>
 <div id="version-badge" style="position:fixed;bottom:14px;left:14px;z-index:9000;font-family:monospace;font-size:10px;color:#8090a8;pointer-events:none"></div>
+<div id="search-bar">
+  <input id="search-input" placeholder="Filter: infantry, mavic, fpv, blue, red…" oninput="filterUnits(this.value)" />
+  <span id="search-count"></span>
+  <button class="ann-btn" onclick="clearUnitFilter()" style="padding:3px 7px;font-size:11px">✕</button>
+</div>
 <div id="toolbar">
   <button class="tb-btn" id="dep-btn" onclick="enterPlaceDeployPoint()" title="Place deployment point">⚑</button>
+  <button class="tb-btn" id="search-btn" onclick="toggleSearchBar()" title="Filter/search units">⊟</button>
   <button class="tb-btn" id="ruler-btn" title="Measure distances">⊾</button>
   <button class="tb-btn" id="annotate-btn" title="Draw annotations">✎</button>
   <button class="tb-btn" id="elev-btn" onclick="cycleMapMode()" title="Switch map layer (Hybrid / Satellite / Elevation)">🗺 HYB</button>
