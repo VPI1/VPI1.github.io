@@ -4270,7 +4270,13 @@ setInterval(() => {
       }
       continue; // own units always visible, skip display logic
     }
-    // Enemy unit visibility
+    // Enemy unit visibility — admin sees all
+    if (_adminAuthed) {
+      const el2 = m.getElement();
+      if (el2) el2.style.display = '';
+      removeGhost(m);
+      continue;
+    }
     const spotted = m._spottedUntil > now;
     const wasSpotted = m._wasSpotted || false;
     m._wasSpotted = spotted;
@@ -4493,8 +4499,8 @@ function createMarker(pt, side, count, role = '') {
   else if (role === 'artillery') { m._maxAmmo = 5; m._ammo = 3 + Math.floor(Math.random() * 3); }
   allMarkers.push(m);
   m.addTo(map);
-  // Enemy units start hidden (fog of war)
-  if (side !== userSide) {
+  // Enemy units start hidden (fog of war) — admin sees all
+  if (side !== userSide && !_adminAuthed) {
     m.on('add', () => { const el = m.getElement(); if (el) el.style.display = 'none'; });
     setTimeout(() => { const el = m.getElement(); if (el) el.style.display = 'none'; }, 0);
   }
@@ -4799,6 +4805,11 @@ function openAdminPanel() {
   const existing = document.getElementById('admin-panel');
   if (existing) { existing.remove(); _adminStopPlacing(); return; }
   _renderAdminPanel();
+  // Immediately reveal all enemy markers now that admin is authenticated
+  for (const m of allMarkers) {
+    const el = m.getElement();
+    if (el) el.style.display = '';
+  }
 }
 
 function _adminStopPlacing() {
@@ -4937,7 +4948,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AV';
+const VERSION = '2026-08-22-AW';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
