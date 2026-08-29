@@ -484,6 +484,15 @@ const OVERPASS_ENDPOINTS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 
+// Simple djb2-style hash for cache key
+function _strHash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (h * 33 ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+const OVERPASS_CACHE_TTL = 7 * 24 * 3600 * 1000; // 7 days
+
 async function fetchAreas() {
   // Use the full game boundary extents so rivers/streams across the whole map are loaded
   const _lats = GAME_BOUNDARY.map(p=>p[0]), _lngs = GAME_BOUNDARY.map(p=>p[1]);
@@ -503,17 +512,36 @@ async function fetchAreas() {
     way["bridge"="yes"]["highway"](${bbox});
   );out body;>;out skel qt;`;
 
+  // Serve from localStorage cache if fresh (terrain changes on 7-day scale)
+  const cacheKey = 'overpass_cache_' + _strHash(q);
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      const { ts, data } = JSON.parse(raw);
+      if (Date.now() - ts < OVERPASS_CACHE_TTL) {
+        document.getElementById('loading-text').textContent = 'Loaded terrain from cache…';
+        return data;
+      }
+    }
+  } catch (_) {}
+
+  // Fetch fresh
+  let data = null;
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
       document.getElementById('loading-text').textContent = `Querying ${new URL(endpoint).hostname}…`;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
+      const timer = setTimeout(() => controller.abort(), 20000);
       const r = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`, { signal: controller.signal });
       clearTimeout(timer);
-      if (r.ok) return r.json();
+      if (r.ok) { data = await r.json(); break; }
     } catch (_) { /* try next */ }
   }
-  throw new Error('All Overpass endpoints failed. Try again in a moment.');
+  if (!data) throw new Error('All Overpass endpoints failed. Try again in a moment.');
+
+  // Persist — catch QuotaExceededError gracefully
+  try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data })); } catch (_) {}
+  return data;
 }
 
 // approximate circle polygon around a node (for place=village nodes)
@@ -4887,7 +4915,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AT';
+const VERSION = '2026-08-22-AU';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
