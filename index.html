@@ -4745,9 +4745,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AQ';
+const VERSION = '2026-08-22-AR';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-08-22-v1'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -5585,14 +5585,21 @@ async function main() {
       markOccupied(pt, 'infantry', true);
       createMarker(pt, 'blue', groupSize('infantry'), 'infantry');
     }
-    // ── Blue support (mortar + mavic, 8-10 units) ──
-    const numBlueSup = 8 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < numBlueSup; i++) {
-      const role = pickWeightedRole(BLUE_SUPPORT);
-      const pt = pickSpotSep(true, role);
+    // ── Blue mortars (3-4 units) ──
+    const numBlueMortar = 3 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < numBlueMortar; i++) {
+      const pt = pickSpotSep(true, 'mortar');
       if (!pt) continue;
-      markOccupied(pt, role, true);
-      createMarker(pt, 'blue', groupSize(role), role);
+      markOccupied(pt, 'mortar', true);
+      createMarker(pt, 'blue', groupSize('mortar'), 'mortar');
+    }
+    // ── Blue mavics (~1 per horizontal km ≈ 22-26 units) ──
+    const numBlueMavic = 22 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < numBlueMavic; i++) {
+      const pt = pickSpotSep(true, 'mavic');
+      if (!pt) continue;
+      markOccupied(pt, 'mavic', true);
+      createMarker(pt, 'blue', groupSize('mavic'), 'mavic');
     }
 
     // ── Red infantry core (14-18 units) ──
@@ -5603,14 +5610,21 @@ async function main() {
       markOccupied(pt, 'infantry', false);
       createMarker(pt, 'red', groupSize('infantry'), 'infantry');
     }
-    // ── Red support (mortar + mavic, 9-12 units) ──
-    const numRedSup = 9 + Math.floor(Math.random() * 4);
-    for (let i = 0; i < numRedSup; i++) {
-      const role = pickWeightedRole(RED_SUPPORT);
-      const pt = pickSpotSep(false, role);
+    // ── Red mortars (4-5 units) ──
+    const numRedMortar = 4 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < numRedMortar; i++) {
+      const pt = pickSpotSep(false, 'mortar');
       if (!pt) continue;
-      markOccupied(pt, role, false);
-      createMarker(pt, 'red', groupSize(role), role);
+      markOccupied(pt, 'mortar', false);
+      createMarker(pt, 'red', groupSize('mortar'), 'mortar');
+    }
+    // ── Red mavics (~1 per horizontal km ≈ 22-26 units) ──
+    const numRedMavic = 22 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < numRedMavic; i++) {
+      const pt = pickSpotSep(false, 'mavic');
+      if (!pt) continue;
+      markOccupied(pt, 'mavic', false);
+      createMarker(pt, 'red', groupSize('mavic'), 'mavic');
     }
 
     // ── Extra infantry close to line (1-2.5 km band), 6 per side ──
