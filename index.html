@@ -177,6 +177,17 @@
     .dep-role-btn { background:#232d42; color:#DADAD8; border:1px solid #3254AD; border-radius:4px; padding:3px 7px; font-size:10px; cursor:pointer; }
     .dep-role-btn:hover { background:#3254AD; color:#fff; }
     #dep-picker { display:none; position:fixed; bottom:58px; right:14px; z-index:9100; background:#1e2638; border:1px solid rgba(50,84,173,0.45); border-radius:6px; padding:7px; flex-wrap:wrap; gap:3px; max-width:200px; box-shadow:0 2px 8px #000a; }
+    /* search filter bar */
+    #search-bar { position:fixed; bottom:58px; right:14px; z-index:9100; display:none; align-items:center;
+      gap:6px; background:rgba(30,38,56,0.97); border:1px solid rgba(50,84,173,0.45); border-radius:8px;
+      padding:5px 8px; box-shadow:0 2px 12px rgba(0,0,0,0.5); }
+    #search-bar.show { display:flex; }
+    #search-input { background:rgba(50,84,173,0.12); border:1px solid rgba(50,84,173,0.35);
+      border-radius:5px; color:#DADAD8; font-family:monospace; font-size:11px; padding:4px 8px;
+      width:220px; outline:none; }
+    #search-input::placeholder { color:#607080; }
+    #search-input:focus { border-color:rgba(50,84,173,0.7); }
+    #search-count { font-size:10px; color:#8090a8; font-family:monospace; white-space:nowrap; min-width:40px; }
     /* toolbar */
     #toolbar { position:fixed; bottom:14px; right:14px; z-index:9000; display:flex; gap:3px;
       background:rgba(30,38,56,0.96); border:1px solid rgba(50,84,173,0.35); border-radius:9px; padding:4px; }
@@ -772,14 +783,29 @@ const ROLES = {
 };
 const kmToDeg = km => km / 111.32;
 
+// Per-role symbol and accent color for quick visual recognition
+const ROLE_SYMBOLS = { infantry:'⊕', mavic:'◈', fpv:'▲', mortar:'⬡', artillery:'★' };
+const ROLE_ACCENT  = {
+  infantry: { blue:'#64b0f7', red:'#ef7070' },
+  mavic:    { blue:'#26c6da', red:'#26c6da' },
+  fpv:      { blue:'#ef5350', red:'#ffa726' },
+  mortar:   { blue:'#ffd54f', red:'#ffd54f' },
+  artillery:{ blue:'#ff9800', red:'#ff9800' },
+};
+
 function soldierIcon(side, count, role = '') {
-  const sz  = count >= 4 ? 32 : 26;
-  const cls = side === 'blue' ? 'blue-marker' : 'red-marker';
-  const lbl = role ? ROLES[role]?.label ?? role : '';
+  const sz     = count >= 4 ? 32 : 26;
+  const cls    = side === 'blue' ? 'blue-marker' : 'red-marker';
+  const lbl    = role ? ROLES[role]?.label ?? role : '';
+  const sym    = ROLE_SYMBOLS[role] ?? '';
+  const accent = (ROLE_ACCENT[role]?.[side]) ?? (side === 'blue' ? '#90caf9' : '#ef9a9a');
+  const innerHtml = sym
+    ? `<span style="font-size:${sz < 30 ? 9 : 11}px;line-height:1;display:block;color:${accent};margin-bottom:-1px">${sym}</span><span style="font-size:${sz < 30 ? 10 : 12}px;font-weight:700;line-height:1">${count}</span>`
+    : `${count}`;
   return L.divIcon({
     className: '',
     html: `<div style="display:flex;flex-direction:column;align-items:center;gap:1px">
-      <div class="soldier-marker ${cls}" style="width:${sz}px;height:${sz}px;">${count}</div>
+      <div class="soldier-marker ${cls}" style="width:${sz}px;height:${sz}px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-color:${accent};box-shadow:0 0 0 1px ${accent}44">${innerHtml}</div>
       ${lbl ? `<div style="font-size:8px;font-weight:700;color:#fff;text-shadow:0 1px 3px #000;white-space:nowrap;letter-spacing:.2px">${lbl}</div>` : ''}
     </div>`,
     iconSize: [sz, sz + (lbl ? 13 : 0)],
@@ -1837,39 +1863,79 @@ function exitCombatMode() {
 
 // ── unit panel ─────────────────────────────────────────────────
 let panelRangeCircle = null;
+let panelRangeCircleMax = null;  // outer max-range ring
+let panelHorizonCircle = null;   // radio horizon for FPV/mavic
 
 function clearPanelRange() {
-  if (panelRangeCircle) { map.removeLayer(panelRangeCircle); panelRangeCircle = null; }
+  if (panelRangeCircle)    { map.removeLayer(panelRangeCircle);    panelRangeCircle = null; }
+  if (panelRangeCircleMax) { map.removeLayer(panelRangeCircleMax); panelRangeCircleMax = null; }
+  if (panelHorizonCircle)  { map.removeLayer(panelHorizonCircle);  panelHorizonCircle = null; }
 }
 
+// Primary (effective) range shown as inner filled circle
 function unitDisplayRangeKm(m) {
-  if (m._role === 'infantry' || m._role === 'mortar') return unitRangeM(m) / 1000;
+  if (m._role === 'infantry')  return unitRangeM(m) / 1000;
+  if (m._role === 'mortar')    return (m._artMaxRangeM ?? 4000) / 1000;
   if (m._role === 'fpv')       return FPV_RADIO_HORIZON_M / 1000;
-  if (m._role === 'artillery') return 25;
+  if (m._role === 'artillery') return (m._artMaxRangeM ?? 25000) / 1000;
   if (m._role === 'mavic')     return MAVIC_GND_RADIUS / 1000;
   return null;
 }
 
+// Max (absolute) range shown as outer dashed ring — null = skip
+function unitMaxRangeKm(m) {
+  if (m._role === 'artillery') return 25;
+  if (m._role === 'mortar')    return ROLES.mortar?.maxKm ?? 4;
+  if (m._role === 'mavic')     return ROLES.mavic?.maxKm ?? 6;
+  return null;
+}
+
+// Radio horizon radius using d = 4.12*sqrt(h_drone) km (Line-of-sight formula)
+const MAVIC_RADIO_HORIZON_M  = Math.round(4.12 * Math.sqrt(MAVIC_ALTITUDE) * 1000); // ~58km at 200m AGL
+const MAVIC_CTRL_HORIZON_M   = 7000;  // practical DJI controller limit
+
 function showPanelRange(m) {
   clearPanelRange();
   const rangeKm = unitDisplayRangeKm(m);
-  if (!rangeKm) return;
-  const roleColors = { infantry:'#42a5f5', fpv:'#ef5350', artillery:'#ff9500', mortar:'#ffa726', mavic:'#26c6da' };
+  const maxKm   = unitMaxRangeKm(m);
+  const roleColors = { infantry:'#42a5f5', fpv:'#ef5350', artillery:'#ff9800', mortar:'#ffd54f', mavic:'#26c6da' };
   const color = roleColors[m._role] ?? '#fff';
-  panelRangeCircle = L.circle(m.getLatLng(), {
-    radius: rangeKm * 1000, color, fill: true, fillColor: color,
-    fillOpacity: 0.04, weight: 1.5, opacity: 0.65, dashArray: '6 4'
-  }).addTo(map);
+  if (rangeKm) {
+    panelRangeCircle = L.circle(m.getLatLng(), {
+      radius: rangeKm * 1000, color, fill: true, fillColor: color,
+      fillOpacity: 0.05, weight: 1.5, opacity: 0.7, dashArray: '6 4'
+    }).addTo(map);
+  }
+  if (maxKm && maxKm * 1000 > (rangeKm ?? 0) * 1000 + 50) {
+    panelRangeCircleMax = L.circle(m.getLatLng(), {
+      radius: maxKm * 1000, color, fill: false,
+      weight: 1, opacity: 0.35, dashArray: '4 8'
+    }).addTo(map);
+  }
+  // Radio horizon circle for FPV and mavic
+  if (m._role === 'fpv') {
+    panelHorizonCircle = L.circle(m.getLatLng(), {
+      radius: FPV_RADIO_HORIZON_M, color: '#ef5350', fill: true,
+      fillColor: '#ef5350', fillOpacity: 0.03, weight: 1, opacity: 0.4, dashArray: '2 8'
+    }).addTo(map);
+  } else if (m._role === 'mavic') {
+    panelHorizonCircle = L.circle(m.getLatLng(), {
+      radius: MAVIC_CTRL_HORIZON_M, color: '#26c6da', fill: true,
+      fillColor: '#26c6da', fillOpacity: 0.03, weight: 1, opacity: 0.35, dashArray: '2 8'
+    }).addTo(map);
+  }
 }
 
 function updatePanelRange() {
-  if (!activePanel || !panelRangeCircle) return;
+  if (!activePanel) return;
   const ll = activePanel.getLatLng();
-  panelRangeCircle.setLatLng(ll);
-  // Recompute radius in case elevation-dependent range changed
-  const newRangeKm = unitDisplayRangeKm(activePanel);
-  if (newRangeKm && Math.abs(panelRangeCircle.getRadius() - newRangeKm * 1000) > 1) {
-    panelRangeCircle.setRadius(newRangeKm * 1000);
+  if (panelRangeCircle)    panelRangeCircle.setLatLng(ll);
+  if (panelRangeCircleMax) panelRangeCircleMax.setLatLng(ll);
+  if (panelHorizonCircle)  panelHorizonCircle.setLatLng(ll);
+  if (panelRangeCircle) {
+    const newRangeKm = unitDisplayRangeKm(activePanel);
+    if (newRangeKm && Math.abs(panelRangeCircle.getRadius() - newRangeKm * 1000) > 1)
+      panelRangeCircle.setRadius(newRangeKm * 1000);
   }
 }
 
@@ -4405,6 +4471,51 @@ let _fbDb = null;
 function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || FB_DEFAULT_CFG; } catch { return FB_DEFAULT_CFG; } }
 function setFBConfig(c) { localStorage.setItem(FB_KEY, JSON.stringify(c)); }
 
+// ── Unit search / filter ──────────────────────────────────────────────────
+let _unitFilterActive = false;
+
+function toggleSearchBar() {
+  const bar = document.getElementById('search-bar');
+  const btn = document.getElementById('search-btn');
+  const showing = bar.classList.toggle('show');
+  btn.classList.toggle('active', showing);
+  if (showing) {
+    document.getElementById('search-input').focus();
+  } else {
+    clearUnitFilter();
+  }
+}
+
+function filterUnits(query) {
+  const q = query.trim().toLowerCase();
+  _unitFilterActive = q.length > 0;
+  let shown = 0;
+  for (const m of allMarkers) {
+    const role  = (m._role ?? '').toLowerCase();
+    const side  = (m._side ?? '').toLowerCase();
+    const label = (ROLES[m._role]?.label ?? '').toLowerCase();
+    const matches = !q || role.includes(q) || side.includes(q) || label.includes(q);
+    const el = m.getElement ? m.getElement() : null;
+    if (el) {
+      el.style.opacity = matches ? '' : '0.08';
+      el.style.pointerEvents = matches ? '' : 'none';
+    }
+    if (matches) shown++;
+  }
+  const cnt = document.getElementById('search-count');
+  if (cnt) cnt.textContent = q ? shown + '/' + allMarkers.length : '';
+}
+
+function clearUnitFilter() {
+  const inp = document.getElementById('search-input');
+  if (inp) inp.value = '';
+  filterUnits('');
+  const bar = document.getElementById('search-bar');
+  if (bar) bar.classList.remove('show');
+  const btn = document.getElementById('search-btn');
+  if (btn) btn.classList.remove('active');
+}
+
 // ── Sync debug log (visible in-map) ───────────────────────────────────────
 function _syncLog(msg) {
   var el = document.getElementById('sync-log');
@@ -4745,7 +4856,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AR';
+const VERSION = '2026-08-22-AS';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
