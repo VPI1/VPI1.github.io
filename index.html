@@ -492,46 +492,39 @@ function _strHash(s) {
 }
 
 const OVERPASS_CACHE_TTL = 7 * 24 * 3600 * 1000; // 7 days
+// Cache key version — bump to force a fresh fetch when query changes
+const OVERPASS_CACHE_VER = 'v1';
 
-async function fetchAreas() {
-  // Use the full game boundary extents so rivers/streams across the whole map are loaded
-  const _lats = GAME_BOUNDARY.map(p=>p[0]), _lngs = GAME_BOUNDARY.map(p=>p[1]);
-  const bbox = `${Math.min(..._lats)-0.01},${Math.min(..._lngs)-0.01},${Math.max(..._lats)+0.01},${Math.max(..._lngs)+0.01}`;
-  const q = `[out:json][timeout:60];(
-    way["natural"="wood"](${bbox});
-    relation["natural"="wood"](${bbox});
-    way["landuse"="residential"](${bbox});
-    way["place"~"village|town|hamlet"](${bbox});
-    node["place"~"village|town|hamlet"](${bbox});
-    way["building"](${bbox});
-    way["highway"~"residential|service|unclassified|tertiary|living_street"](${bbox});
-    way["natural"="water"](${bbox});
-    relation["natural"="water"](${bbox});
-    way["waterway"~"river|canal"](${bbox});
-    way["waterway"~"stream|ditch"](${bbox});
-    way["bridge"="yes"]["highway"](${bbox});
-  );out body;>;out skel qt;`;
+// fetchAndExtract: returns extracted terrain data, caching the extracted result
+// (not raw JSON, which is 5-20 MB and blows past localStorage quota).
+async function fetchAndExtractTerrain(bbox, q) {
+  const cacheKey = 'terrain_ext_' + OVERPASS_CACHE_VER + '_' + _strHash(q);
 
-  // Serve from localStorage cache if fresh (terrain changes on 7-day scale)
-  const cacheKey = 'overpass_cache_' + _strHash(q);
+  // ── 1. Try cache ──
   try {
     const raw = localStorage.getItem(cacheKey);
     if (raw) {
-      const { ts, data } = JSON.parse(raw);
-      if (Date.now() - ts < OVERPASS_CACHE_TTL) {
+      const cached = JSON.parse(raw);
+      if (cached.ts && Date.now() - cached.ts < OVERPASS_CACHE_TTL) {
         document.getElementById('loading-text').textContent = 'Loaded terrain from cache…';
-        return data;
+        await new Promise(r => setTimeout(r, 0)); // yield so browser can paint
+        return cached.ext;
       }
     }
   } catch (_) {}
 
-  // Fetch fresh
+  // ── 2. Fetch raw ──
   let data = null;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
+  const OVERPASS_ENDPOINTS_LOCAL = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  ];
+  for (const endpoint of OVERPASS_ENDPOINTS_LOCAL) {
     try {
       document.getElementById('loading-text').textContent = `Querying ${new URL(endpoint).hostname}…`;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 20000);
+      const timer = setTimeout(() => controller.abort(), 25000);
       const r = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`, { signal: controller.signal });
       clearTimeout(timer);
       if (r.ok) { data = await r.json(); break; }
@@ -539,9 +532,37 @@ async function fetchAreas() {
   }
   if (!data) throw new Error('All Overpass endpoints failed. Try again in a moment.');
 
-  // Persist — catch QuotaExceededError gracefully
-  try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data })); } catch (_) {}
-  return data;
+  // ── 3. Extract & yield before CPU-heavy step ──
+  document.getElementById('loading-text').textContent = 'Processing terrain…';
+  await new Promise(r => setTimeout(r, 0));
+
+  const ext = {
+    anchors: extractUrbanAnchors(data),
+    ...extractPolygons(data),
+  };
+
+  // ── 4. Cache extracted result (much smaller than raw JSON) ──
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), ext }));
+  } catch (_) {
+    // QuotaExceededError — clear old terrain caches and retry once
+    try {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith('terrain_ext_') || k.startsWith('overpass_cache_')) localStorage.removeItem(k);
+      }
+      localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), ext }));
+    } catch (_2) { /* still no space — live without cache */ }
+  }
+  return ext;
+}
+
+async function fetchAreas() {
+  // kept for any legacy callers — not used by init anymore
+  const _lats = GAME_BOUNDARY.map(p=>p[0]), _lngs = GAME_BOUNDARY.map(p=>p[1]);
+  const bbox = `${Math.min(..._lats)-0.01},${Math.min(..._lngs)-0.01},${Math.max(..._lats)+0.01},${Math.max(..._lngs)+0.01}`;
+  const q = `[out:json][timeout:60];(way["natural"="wood"](${bbox}););out body;>;out skel qt;`;
+  const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`);
+  return r.json();
 }
 
 // approximate circle polygon around a node (for place=village nodes)
@@ -4725,6 +4746,7 @@ function fbApplyUnit(d) {
     }
     if (d.count != null && d.count !== existing._count) {
       existing._count = d.count;
+      if (d.count === 0) { removeUnit(existing); return; }  // unit destroyed on other client
       existing.setIcon(soldierIcon(existing._side, d.count, existing._role));
     }
     if (d.fortLevel != null) { existing._fortLevel = d.fortLevel; updateFortBadge(existing); }
@@ -4915,7 +4937,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AU';
+const VERSION = '2026-08-22-AV';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5615,15 +5637,29 @@ async function main() {
     }
 
     document.getElementById('loading-text').textContent = 'Fetching map data…';
-    const data  = await fetchAreas();
-    document.getElementById('loading-text').textContent = 'Processing polygons…';
-    urbanAnchors = extractUrbanAnchors(data);
-    const extracted = extractPolygons(data);
-    terrainPolys = extracted.polys;
+    const _lats2 = GAME_BOUNDARY.map(p=>p[0]), _lngs2 = GAME_BOUNDARY.map(p=>p[1]);
+    const _bbox2 = `${Math.min(..._lats2)-0.01},${Math.min(..._lngs2)-0.01},${Math.max(..._lats2)+0.01},${Math.max(..._lngs2)+0.01}`;
+    const _q2 = `[out:json][timeout:60];(
+    way["natural"="wood"](${_bbox2});
+    relation["natural"="wood"](${_bbox2});
+    way["landuse"="residential"](${_bbox2});
+    way["place"~"village|town|hamlet"](${_bbox2});
+    node["place"~"village|town|hamlet"](${_bbox2});
+    way["building"](${_bbox2});
+    way["highway"~"residential|service|unclassified|tertiary|living_street"](${_bbox2});
+    way["natural"="water"](${_bbox2});
+    relation["natural"="water"](${_bbox2});
+    way["waterway"~"river|canal"](${_bbox2});
+    way["waterway"~"stream|ditch"](${_bbox2});
+    way["bridge"="yes"]["highway"](${_bbox2});
+    );out body;>;out skel qt;`;
+    const ext = await fetchAndExtractTerrain(_bbox2, _q2);
+    urbanAnchors = ext.anchors;
+    terrainPolys = ext.polys;
     spawnPolys   = terrainPolys; // module-level alias used by spawn helpers
-    waterPolys   = extracted.wPolys;
-    riverLines   = extracted.rLines;
-    bridgeSegs   = extracted.bSegs;
+    waterPolys   = ext.wPolys;
+    riverLines   = ext.rLines;
+    bridgeSegs   = ext.bSegs;
 
     if (!spawnPolys.length) {
       showError('No spawn areas found in this area.');
@@ -5788,8 +5824,8 @@ async function main() {
       markOccupied(pt, 'mortar', false);
       createMarker(pt, 'red', groupSize('mortar'), 'mortar');
     }
-    // ── Red mavics (~1 per horizontal km ≈ 22-26 units) ──
-    const numRedMavic = 22 + Math.floor(Math.random() * 5);
+    // ── Red mavics (reduced) ──
+    const numRedMavic = 8 + Math.floor(Math.random() * 5);
     for (let i = 0; i < numRedMavic; i++) {
       const pt = pickSpotSep(false, 'mavic');
       if (!pt) continue;
