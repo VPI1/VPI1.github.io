@@ -4980,7 +4980,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BA';
+const VERSION = '2026-08-22-BB';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5709,6 +5709,12 @@ async function main() {
       return;
     }
 
+    // Spawn cache — keyed by SPAWN_KEY+GLOBAL_RESET_TS; auto-invalidated on game reset
+    const _SCKEY = 'spawn_v2_' + SPAWN_KEY + '_' + GLOBAL_RESET_TS;
+    let _scData = null;
+    try { const _sr = localStorage.getItem(_SCKEY); if (_sr) _scData = JSON.parse(_sr); } catch {}
+    const _useSpawnCache = Array.isArray(_scData) && _scData.length > 20;
+    if (!_useSpawnCache) {
     // Seed Math.random for deterministic spawn — all sessions get identical units
     const _origMathRand = Math.random;
     Math.random = seededRand(SPAWN_KEY);
@@ -5908,6 +5914,25 @@ async function main() {
 
     Math.random = _origMathRand;
     _spawnUidCounter = -1;
+    // Persist spawn for instant restore on next load
+    try {
+      localStorage.setItem(_SCKEY, JSON.stringify(
+        allMarkers.map(m => ({ pos: markerPos(m), side: m._side, count: m._count, role: m._role }))
+      ));
+    } catch {}
+    } else {
+    // Fast cache path — create markers in batches of 10 so browser stays responsive
+    document.getElementById('loading-text').textContent = 'Restoring units…';
+    for (let _ci = 0; _ci < _scData.length; _ci++) {
+      const _cu = _scData[_ci];
+      createMarker(_cu.pos, _cu.side, _cu.count, _cu.role);
+      if (_ci % 10 === 9) {
+        document.getElementById('loading-text').textContent =
+          'Restoring units… (' + (_ci + 1) + '/' + _scData.length + ')';
+        await new Promise(r => requestAnimationFrame(r));
+      }
+    }
+    } // end spawn cache if/else
 
     document.getElementById('loading').style.display = 'none';
     loadAnnotations();
