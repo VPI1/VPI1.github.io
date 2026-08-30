@@ -2182,6 +2182,8 @@ function _buildActTab(m, now, moving) {
   }
 
   if (m._role === 'fpv' || m._role === 'mavic') {
+    h += `<div class="psec">Terrain</div>`;
+    h += _pb('Calculate Horizon Here', '◎', 'tac', "_pa('calc-horizon')");
     h += `<div class="psec">Relay Antenna</div>`;
     if (m._antennaPending) {
       const _aRem = Math.max(0, Math.ceil((m._antennaPending.startAt + m._antennaPending.duration - now) / 1000));
@@ -2523,6 +2525,11 @@ window._pa = function(action) {
     // Defender breaks off — end the fight that's targeting this unit
     const _inc = [...activeFights.entries()].find(([,f]) => f.defender === m);
     if (_inc) { endFight(_inc[0]); showToast('Broke off engagement.', '#90caf9'); }
+  }
+  else if (action === 'calc-horizon') {
+    if (!hzMode) toggleHorizonMode();
+    hzCalcAt(m.getLatLng());
+    closePanel();
   }
   else if (action === 'establish-antenna') { droneStartAntenna(m); }
   else if (action === 'cancel-antenna')    { droneCancelAntenna(m); }
@@ -5040,7 +5047,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BI';
+const VERSION = '2026-08-22-BJ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
