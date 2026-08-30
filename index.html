@@ -861,10 +861,7 @@ map.on('click',(e)=>{
   }
 });
 
-// ── Close/clear button ──
-document.getElementById('hz-clear-btn').addEventListener('click',()=>{
-  if (confirm('Clear the current line of sight and all history?')) hzClear();
-});
+// hz-clear-btn uses inline onclick (panel HTML loads after </script>)
 
 </script>
 </head>
@@ -5573,7 +5570,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BF';
+const VERSION = '2026-08-22-BG';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6563,7 +6560,7 @@ function showError(msg) {
 <div id="hzPanel">
   <div class="hz-header">
     <span class="hz-micro" style="margin-bottom:0;">Horizon — line of sight</span>
-    <button id="hz-clear-btn" class="tb-btn" style="font-size:11px;padding:2px 8px;">Clear</button>
+    <button id="hz-clear-btn" class="tb-btn" style="font-size:11px;padding:2px 8px;" onclick="if(confirm('Clear horizon and all history?')) hzClear()">Clear</button>
   </div>
   <div style="font-size:10.5px;color:#8891a5;">Click anywhere on the map to compute what is visible from that point.</div>
   <div class="hz-progress-track" id="hzProgressTrack"><div class="hz-progress-fill" id="hzProgressFill"></div></div>
