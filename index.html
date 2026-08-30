@@ -344,6 +344,7 @@ function loadFirebaseSDK(cb) {
   <div style="position:relative;display:inline-block;">
     <button class="tb-btn" id="elev-btn" onclick="toggleMapDropdown()" title="Switch map layer">🗺 HYB</button>
     <div id="elev-dropdown" style="display:none;position:absolute;bottom:100%;left:0;z-index:2100;background:#1c2130;border:1px solid #3a4255;border-radius:7px;box-shadow:0 -4px 16px #0009;min-width:140px;padding:4px 0;margin-bottom:3px;">
+      <div class="elev-dd-item" data-mode="terrain"   onclick="setMapMode('terrain')">🌿 Terrain</div>
       <div class="elev-dd-item" data-mode="hybrid"    onclick="setMapMode('hybrid')">🗺 Hybrid</div>
       <div class="elev-dd-item" data-mode="satellite" onclick="setMapMode('satellite')">🛰 Satellite</div>
       <div class="elev-dd-item" data-mode="elevation" onclick="setMapMode('elevation')">⛰ Elevation</div>
@@ -587,8 +588,8 @@ const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
 let mapMode = 'hybrid';
 hybridLayer.addTo(map);
 
-const MAP_MODES = ['hybrid', 'satellite', 'elevation', 'osm'];
-const MAP_MODE_LABELS = { hybrid: '🗺 HYB', satellite: '🛰 SAT', elevation: '⛰ ELV', osm: '🗺 OSM' };
+const MAP_MODES = ['terrain', 'hybrid', 'satellite', 'elevation', 'osm'];
+const MAP_MODE_LABELS = { terrain: '🌿 TER', hybrid: '🗺 HYB', satellite: '🛰 SAT', elevation: '⛰ ELV', osm: '🗺 OSM' };
 const MAP_MODE_LAYERS = { hybrid: hybridLayer, satellite: satelliteLayer, elevation: elevationLayer, osm: osmLayer };
 
 function toggleMapDropdown() {
@@ -612,20 +613,32 @@ function setMapMode(mode) {
   document.getElementById('elev-dropdown').style.display = 'none';
   if (prev === mode) return;
   mapMode = mode;
-  if (mode === 'elevation') {
-    if (prev !== 'hybrid') map.removeLayer(MAP_MODE_LAYERS[prev]);
-    if (!map.hasLayer(MAP_MODE_LAYERS['hybrid'])) MAP_MODE_LAYERS['hybrid'].addTo(map);
-    MAP_MODE_LAYERS['elevation'].addTo(map);
+  // ── Tear down previous mode ──────────────────────────────────────────────
+  if (prev === 'elevation') {
+    map.removeLayer(MAP_MODE_LAYERS['elevation']);
+    if (mode !== 'hybrid') map.removeLayer(hybridLayer);
+    map.off('moveend zoomend', _scheduleTopoRecolor); clearTimeout(topoRecolorTimer);
+  } else if (prev === 'terrain') {
+    map.removeLayer(terrainViewLayer);
+    if (mode !== 'osm') map.removeLayer(osmLayer);
   } else {
     map.removeLayer(MAP_MODE_LAYERS[prev]);
-    MAP_MODE_LAYERS[mode].addTo(map);
-    if (prev === 'elevation' && mode !== 'hybrid') map.removeLayer(MAP_MODE_LAYERS['hybrid']);
   }
+  // ── Build new mode ───────────────────────────────────────────────────────
+  if (mode === 'elevation') {
+    if (!map.hasLayer(hybridLayer)) hybridLayer.addTo(map);
+    MAP_MODE_LAYERS['elevation'].addTo(map);
+    map.on('moveend zoomend', _scheduleTopoRecolor); _scheduleTopoRecolor();
+  } else if (mode === 'terrain') {
+    if (!map.hasLayer(osmLayer)) osmLayer.addTo(map);
+    terrainViewLayer.addTo(map);
+  } else {
+    if (!map.hasLayer(MAP_MODE_LAYERS[mode])) MAP_MODE_LAYERS[mode].addTo(map);
+  }
+  // ── UI ───────────────────────────────────────────────────────────────────
   document.getElementById('elev-btn').textContent = MAP_MODE_LABELS[mode];
   document.getElementById('elev-btn').classList.toggle('ruler-on', mode === 'elevation');
-  if (prev === 'elevation') { map.off('moveend zoomend', _scheduleTopoRecolor); clearTimeout(topoRecolorTimer); }
-  if (mode === 'elevation') { map.on('moveend zoomend', _scheduleTopoRecolor); _scheduleTopoRecolor(); }
-  const isLight = mode === 'elevation' || mode === 'osm';
+  const isLight = mode === 'elevation' || mode === 'osm' || mode === 'terrain';
   gameBoundaryLayer.setStyle({ color: isLight ? '#222' : '#e0e0e0', opacity: isLight ? 0.9 : 0.75 });
 }
 function cycleMapMode() { setMapMode(MAP_MODES[(MAP_MODES.indexOf(mapMode)+1)%MAP_MODES.length]); }
@@ -5180,7 +5193,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BU';
+const VERSION = '2026-08-22-BV';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5910,6 +5923,9 @@ async function main() {
     waterPolys   = ext.wPolys;
     riverLines   = ext.rLines;
     bridgeSegs   = ext.bSegs;
+    for (const ring of _MERGE_TREE_POLYS) terrainPolys.push({ ring, urban: false });
+    spawnPolys = terrainPolys;
+    buildTerrainView();
 
     if (!spawnPolys.length) {
       showError('No spawn areas found in this area.');
@@ -7009,6 +7025,54 @@ function _fortWarnMsg(obstType, role) {
   if (obstType === 'wire')    return 'Route crosses barbed wire — movement significantly slowed (~2.5×)';
   return 'Route crosses fortification — movement slowed';
 }
+
+// ── Terrain view mode ─────────────────────────────────────────────────────────
+// KML treelines missing from OSM, merged into terrainPolys on load
+const _MERGE_TREE_POLYS = [[[47.8557426,36.2633868],[47.8608523,36.2627821],[47.8608876,36.2557713],[47.873886,36.2544655],[47.8737567,36.2539222],[47.8608817,36.2551929],[47.8608464,36.2493038],[47.8751087,36.2475161],[47.8750675,36.2472269],[47.8616813,36.2484713],[47.8474125,36.2500443],[47.8471743,36.2502941],[47.8469684,36.2510916],[47.8471155,36.2570683],[47.8334397,36.2587421],[47.8333279,36.2395763],[47.8331014,36.2182854],[47.8326425,36.2183205],[47.8331661,36.2661692],[47.8554486,36.2634569],[47.8565541,36.2837707],[47.8534551,36.2841913],[47.8526906,36.283648],[47.8526436,36.2827366],[47.8514851,36.2828067],[47.851391,36.2837969],[47.8503089,36.2845243],[47.838234,36.2856899],[47.8380222,36.2858476],[47.8381104,36.2863121],[47.8486504,36.2852166],[47.8490121,36.2917235],[47.8486769,36.2922318],[47.8486299,36.2928365],[47.8386663,36.2937567],[47.838631,36.2944227],[47.849165,36.2932834],[47.8496649,36.3037733],[47.8500354,36.3037032],[47.8494532,36.2931783],[47.8606201,36.291855],[47.8613256,36.3036068],[47.8617842,36.3031774],[47.8611081,36.2936164],[47.8605436,36.2837575],[47.8666024,36.2829469],[47.8666318,36.2824561],[47.8568657,36.2836743],[47.8563071,36.274271],[47.8615194,36.2738742],[47.8614756,36.2735437],[47.8562894,36.273903],[47.8557426,36.2633868]],[[47.8285479,36.3134733],[47.8285949,36.3131503],[47.8395633,36.3122783],[47.8391751,36.309991],[47.8387398,36.3023493],[47.8284331,36.3033133],[47.8278977,36.3030679],[47.8270858,36.2871972],[47.82738,36.287206],[47.8279742,36.2991243],[47.8387751,36.2978974],[47.8387987,36.2983706],[47.8280095,36.2997202],[47.8281331,36.3026648],[47.8391163,36.3018848],[47.8395222,36.3100699],[47.8399633,36.3127866],[47.8285479,36.3134733]],[[47.8671726,36.2343577],[47.8671903,36.233845],[47.8751087,36.2328065],[47.8751087,36.2332798],[47.8671726,36.2343577]],[[47.8511557,36.2365661],[47.8511116,36.2340816],[47.8522584,36.2340816],[47.8523642,36.2364215],[47.8511557,36.2365661]],[[47.7585649,36.2105582],[47.7572835,36.2087507],[47.7569477,36.2062268],[47.7564705,36.2082775],[47.7536955,36.211222],[47.7530769,36.2099075],[47.752034,36.2020729],[47.7581142,36.2010476],[47.7585738,36.1991547],[47.7590333,36.1984449],[47.7590863,36.197919],[47.7564087,36.1981951],[47.7562968,36.198724],[47.7557608,36.1989463],[47.7558431,36.1977416],[47.7557149,36.1943961],[47.7552996,36.1943435],[47.7551051,36.1898347],[47.7554321,36.1892563],[47.7599567,36.1889408],[47.7610878,36.1887831],[47.7619008,36.1965782],[47.7712577,36.1948036],[47.7711693,36.1917802],[47.7728038,36.1916356],[47.7729363,36.1898347],[47.7732455,36.1899662],[47.7728921,36.1946064],[47.7727684,36.1951125],[47.7723841,36.1952966],[47.7620731,36.1973604],[47.7612513,36.1975707],[47.7607741,36.1988458],[47.7616224,36.2054578],[47.7615252,36.2060888],[47.7585649,36.2105582]],[[47.7442471,36.2723409],[47.7441763,36.2717362],[47.7499393,36.2705137],[47.7499216,36.2710001],[47.7442471,36.2723409]],[[47.7264329,36.3337646],[47.7263811,36.3332317],[47.7231697,36.3337423],[47.723205,36.3344127],[47.7264329,36.3337646]],[[47.7409499,36.3085034],[47.7408791,36.3079119],[47.7473673,36.3068603],[47.7473584,36.3072941],[47.7409499,36.3085034]],[[47.7855902,36.3353986],[47.7853639,36.3338023],[47.7889339,36.3330166],[47.7891054,36.334531],[47.7855902,36.3353986]],[[47.7782235,36.3091607],[47.7781351,36.3085429],[47.7916577,36.3053749],[47.7918961,36.3073861],[47.7910925,36.307649],[47.7916842,36.3146291],[47.7926115,36.3233444],[47.7931767,36.329549],[47.7932915,36.3317048],[47.793,36.3318757],[47.7921523,36.32575],[47.7907216,36.3138141],[47.7902888,36.3084114],[47.7897766,36.3068866],[47.7872041,36.307393],[47.7882487,36.3231604],[47.7878689,36.3231867],[47.7865794,36.3073467],[47.7782235,36.3091607]]];
+
+map.createPane('terrainViewPane');
+map.getPane('terrainViewPane').style.zIndex = '350';
+const terrainViewLayer = L.layerGroup([], { pane: 'terrainViewPane' });
+
+function buildTerrainView() {
+  terrainViewLayer.clearLayers();
+  if (!terrainPolys.length && !waterPolys.length) return;
+  const cvs = L.canvas({ pane: 'terrainViewPane' });
+  // Render forest first (lower z), then urban on top — matches user requirement
+  for (const { ring, urban } of terrainPolys) {
+    if (urban) continue;
+    L.polygon(ring, {
+      renderer: cvs, interactive: false, pane: 'terrainViewPane',
+      color: '#1a5c2a', weight: 1.5, opacity: 0.75,
+      fillColor: '#2e7d3a', fillOpacity: 0.52
+    }).addTo(terrainViewLayer);
+  }
+  for (const { ring, urban } of terrainPolys) {
+    if (!urban) continue;
+    L.polygon(ring, {
+      renderer: cvs, interactive: false, pane: 'terrainViewPane',
+      color: '#7a3a10', weight: 1.5, opacity: 0.75,
+      fillColor: '#d4702a', fillOpacity: 0.52
+    }).addTo(terrainViewLayer);
+  }
+  for (const entry of waterPolys) {
+    const ring = Array.isArray(entry) ? entry : (entry.ring ?? entry);
+    L.polygon(ring, {
+      renderer: cvs, interactive: false, pane: 'terrainViewPane',
+      color: '#1a5cb5', weight: 1, opacity: 0.8,
+      fillColor: '#4da6f5', fillOpacity: 0.55
+    }).addTo(terrainViewLayer);
+  }
+  for (const line of riverLines) {
+    L.polyline(line, {
+      renderer: cvs, interactive: false, pane: 'terrainViewPane',
+      color: '#4da6f5', weight: 2.5, opacity: 0.8
+    }).addTo(terrainViewLayer);
+  }
+}
+
+// Switch to terrain mode as default once all code is loaded
+setMapMode('terrain');
 </script>
 <div id="sync-log" style="position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.7);color:#0f0;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
 <div id="hzPanel">
