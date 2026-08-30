@@ -593,8 +593,15 @@ function setMapMode(mode) {
   document.getElementById('elev-dropdown').style.display = 'none';
   if (prev === mode) return;
   mapMode = mode;
-  map.removeLayer(MAP_MODE_LAYERS[prev]);
-  MAP_MODE_LAYERS[mode].addTo(map);
+  if (mode === 'elevation') {
+    if (prev !== 'hybrid') map.removeLayer(MAP_MODE_LAYERS[prev]);
+    if (!map.hasLayer(MAP_MODE_LAYERS['hybrid'])) MAP_MODE_LAYERS['hybrid'].addTo(map);
+    MAP_MODE_LAYERS['elevation'].addTo(map);
+  } else {
+    map.removeLayer(MAP_MODE_LAYERS[prev]);
+    MAP_MODE_LAYERS[mode].addTo(map);
+    if (prev === 'elevation' && mode !== 'hybrid') map.removeLayer(MAP_MODE_LAYERS['hybrid']);
+  }
   document.getElementById('elev-btn').textContent = MAP_MODE_LABELS[mode];
   document.getElementById('elev-btn').classList.toggle('ruler-on', mode === 'elevation');
   if (prev === 'elevation') { map.off('moveend zoomend', _scheduleTopoRecolor); clearTimeout(topoRecolorTimer); }
@@ -5147,7 +5154,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BO';
+const VERSION = '2026-08-22-BP';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
