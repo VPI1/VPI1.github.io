@@ -350,6 +350,27 @@ function loadFirebaseSDK(cb) {
       <div class="elev-dd-item" data-mode="osm"       onclick="setMapMode('osm')">🗺 OSM</div>
     </div>
   </div>
+  <div style="position:relative;display:inline-block;">
+    <button class="tb-btn" id="fort-btn" onclick="toggleFortDropdown()" title="Toggle fortification overlays">⊞</button>
+    <div id="fort-dropdown" style="display:none;position:absolute;bottom:100%;left:0;z-index:2100;background:#1c2130;border:1px solid #3a4255;border-radius:7px;box-shadow:0 -4px 16px #0009;min-width:165px;padding:6px 8px;margin-bottom:3px;">
+      <div style="color:#8899bb;font-size:10px;margin-bottom:5px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase">Fortifications</div>
+      <label style="display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer;font-size:12px;color:#e0e0e0;border-bottom:1px solid #2a3245;margin-bottom:3px;padding-bottom:5px">
+        <input type="checkbox" id="chkFortAll" checked onchange="setAllFortVisible(this.checked)" style="accent-color:#aaa;cursor:pointer;width:13px;height:13px"> All
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer;font-size:12px;color:#e0e0e0">
+        <input type="checkbox" id="chkFortDitch" checked onchange="setFortVisible('ditches',this.checked)" style="accent-color:#ffc300;cursor:pointer;width:13px;height:13px">
+        <span style="color:#ffc300;font-weight:700;font-size:14px;line-height:1">&#9135;</span> Ditches
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer;font-size:12px;color:#e0e0e0">
+        <input type="checkbox" id="chkFortTeeth" checked onchange="setFortVisible('teeth',this.checked)" style="accent-color:#00fff8;cursor:pointer;width:13px;height:13px">
+        <span style="color:#00fff8;font-weight:700;font-size:14px;line-height:1">&#9135;</span> Dragon's Teeth
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer;font-size:12px;color:#e0e0e0">
+        <input type="checkbox" id="chkFortWire" checked onchange="setFortVisible('wire',this.checked)" style="accent-color:#c3c3c3;cursor:pointer;width:13px;height:13px">
+        <span style="color:#c3c3c3;font-weight:700;font-size:14px;line-height:1">&#9135;</span> Barbed Wire
+      </label>
+    </div>
+  </div>
   <button class="tb-btn" onclick="resetMap()" title="Reset map">↺</button>
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
   <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
@@ -4141,6 +4162,11 @@ function assignRoute(marker, route) {
       showToast('Route crosses stream — movement slowed', '#ffd54f');
     }
   }
+  // Fortification obstacle crossing check
+  { const _oc = routeObstacleCrossing(route, marker._role);
+    if (_oc !== null) { const _om = obstacleSpeedMult(_oc, marker._role);
+      if (_om === 0) { showToast(_fortBlockMsg(_oc, marker._role), '#ef5350'); cancelDraw(); return; }
+      showToast(_fortWarnMsg(_oc, marker._role), '#ffa726'); } }
   const count = pendingSplitCount ?? marker._count;
   let movingMarker = marker;
   if (count < marker._count) {
@@ -4367,7 +4393,9 @@ setInterval(() => {
     const wt = waterAt(curPt);
     const wMult = waterSpeedMult(wt, marker._role);
     if (wMult === 0) { clearRoute(marker); showToast('Unit blocked — impassable water obstacle!', '#ef5350'); continue; }
-    let budget = (suppressed ? WALK_MS * 0.4 : WALK_MS) * wMult;
+    const _ot = _curSegObstacle(route, state.seg); const oMult = obstacleSpeedMult(_ot, marker._role);
+    if (oMult === 0) { clearRoute(marker); showToast(_fortBlockMsg(_ot, marker._role), '#ef5350'); continue; }
+    let budget = (suppressed ? WALK_MS * 0.4 : WALK_MS) * wMult * oMult;
     while (budget > 0 && state.seg < route.length - 1) {
       const d = segMeters(route[state.seg], route[state.seg+1]);
       const left = d * (1 - state.t);
@@ -5152,7 +5180,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BT';
+const VERSION = '2026-08-22-BU';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6889,6 +6917,97 @@ function isBlockedByTeeth(fromLL, toLL) {
     for(let i=0;i<seg.length-1;i++)
       if(_seg2x(ax,ay,bx,by,seg[i][1],seg[i][0],seg[i+1][1],seg[i+1][0])) return true;
   return false;
+}
+
+// ── Fortification overlay toggle ──────────────────────────────────────────────
+function toggleFortDropdown() {
+  const dd = document.getElementById('fort-dropdown');
+  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+}
+function setFortVisible(key, visible) {
+  if (visible) FORT_LAYERS[key].addTo(map); else map.removeLayer(FORT_LAYERS[key]);
+  const states = ['ditches','teeth','wire'].map(k => map.hasLayer(FORT_LAYERS[k]));
+  const all = states.every(Boolean), any = states.some(Boolean);
+  const master = document.getElementById('chkFortAll');
+  master.checked = all; master.indeterminate = any && !all;
+}
+function setAllFortVisible(visible) {
+  const ids = { ditches:'chkFortDitch', teeth:'chkFortTeeth', wire:'chkFortWire' };
+  ['ditches','teeth','wire'].forEach(k => {
+    if (visible) FORT_LAYERS[k].addTo(map); else map.removeLayer(FORT_LAYERS[k]);
+    document.getElementById(ids[k]).checked = visible;
+  });
+  document.getElementById('chkFortAll').indeterminate = false;
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#fort-btn') && !e.target.closest('#fort-dropdown'))
+    document.getElementById('fort-dropdown').style.display = 'none';
+});
+
+// ── Obstacle speed multipliers ─────────────────────────────────────────────────
+// Ditches: ~3-4 m wide, ~2 m deep + earth parapet — extremely hard to cross
+// Dragon's teeth: concrete pyramids — negligible for infantry, impassable for artillery
+// Barbed wire: 2 rows concertina at ~1.8 m — significant infantry slowdown
+function obstacleSpeedMult(obstType, role) {
+  if (!obstType || role === 'mavic') return 1.0;
+  if (obstType === 'ditches') {
+    if (role === 'artillery') return 0.0;  // can't cross AT ditch
+    if (role === 'mortar')    return 0.12; // crew-carried weapon, hardest
+    if (role === 'fpv')       return 0.22; // individual, somewhat easier
+    return 0.18;                           // infantry
+  }
+  if (obstType === 'teeth') {
+    if (role === 'artillery') return 0.0;  // completely blocked
+    if (role === 'mortar')    return 0.75; // can squeeze through on foot
+    return 0.82;                           // infantry, fpv — minor slowdown
+  }
+  if (obstType === 'wire') {
+    if (role === 'artillery') return 0.0;  // wire entangles tracks/wheels
+    if (role === 'mortar')    return 0.30; // carrying equipment, harder
+    if (role === 'fpv')       return 0.42; // individual
+    return 0.38;                           // infantry
+  }
+  return 1.0;
+}
+
+// Check the current route segment [seg → seg+1] for any fortification crossing
+function _curSegObstacle(route, seg) {
+  const a = route[seg], b = route[seg+1];
+  if (!a || !b) return null;
+  const ax=a[1],ay=a[0],bx=b[1],by=b[0];
+  for(const s of _DITCH_SEGS) for(let i=0;i<s.length-1;i++) if(_seg2x(ax,ay,bx,by,s[i][1],s[i][0],s[i+1][1],s[i+1][0])) return 'ditches';
+  for(const s of _TEETH_SEGS) for(let i=0;i<s.length-1;i++) if(_seg2x(ax,ay,bx,by,s[i][1],s[i][0],s[i+1][1],s[i+1][0])) return 'teeth';
+  for(const s of _WIRE_SEGS)  for(let i=0;i<s.length-1;i++) if(_seg2x(ax,ay,bx,by,s[i][1],s[i][0],s[i+1][1],s[i+1][0])) return 'wire';
+  return null;
+}
+
+// Check all segments of a drawn route for any fortification crossing
+function routeObstacleCrossing(points, role) {
+  if (role === 'mavic') return null;
+  for (let i = 0; i < points.length - 1; i++) {
+    const ax=points[i][1],ay=points[i][0],bx=points[i+1][1],by=points[i+1][0];
+    for(const s of _DITCH_SEGS) for(let j=0;j<s.length-1;j++) if(_seg2x(ax,ay,bx,by,s[j][1],s[j][0],s[j+1][1],s[j+1][0])) return 'ditches';
+    for(const s of _TEETH_SEGS) for(let j=0;j<s.length-1;j++) if(_seg2x(ax,ay,bx,by,s[j][1],s[j][0],s[j+1][1],s[j+1][0])) return 'teeth';
+    for(const s of _WIRE_SEGS)  for(let j=0;j<s.length-1;j++) if(_seg2x(ax,ay,bx,by,s[j][1],s[j][0],s[j+1][1],s[j+1][0])) return 'wire';
+  }
+  return null;
+}
+
+function _fortBlockMsg(obstType, role) {
+  if (obstType === 'ditches') return role === 'artillery'
+    ? 'Route blocked — artillery cannot cross anti-tank ditch!'
+    : 'Route crosses anti-tank ditch — too deep to pass!';
+  if (obstType === 'teeth') return "Route blocked — dragon’s teeth stop vehicle movement!";
+  if (obstType === 'wire')  return role === 'artillery'
+    ? 'Route blocked — artillery entangled in concertina wire!'
+    : 'Route crosses barbed wire — too dense to pass!';
+  return 'Route blocked by fortification!';
+}
+function _fortWarnMsg(obstType, role) {
+  if (obstType === 'ditches') return 'Route crosses anti-tank ditch — movement severely slowed (~5×)';
+  if (obstType === 'teeth')   return "Route crosses dragon’s teeth — movement slightly slowed";
+  if (obstType === 'wire')    return 'Route crosses barbed wire — movement significantly slowed (~2.5×)';
+  return 'Route crosses fortification — movement slowed';
 }
 </script>
 <div id="sync-log" style="position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.7);color:#0f0;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
