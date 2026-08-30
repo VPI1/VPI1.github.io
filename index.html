@@ -529,7 +529,7 @@ const HypsometricLayer = L.GridLayer.extend({
       _scheduleTopoRecolor();
     };
     img.onerror = () => done(null, tile);
-    img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${coords.z}/${coords.x}/${coords.y}.png`;
+    img.src = `https://elevation-tiles-prod.s3.amazonaws.com/terrarium/${coords.z}/${coords.x}/${coords.y}.png`;
     return tile;
   }
 });
@@ -5147,7 +5147,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BN';
+const VERSION = '2026-08-22-BO';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6147,7 +6147,7 @@ function hzFetchElevTile(z, x, y) {
   if (hzElevCache.has(key)) return hzElevCache.get(key);
   const p = (async () => {
     try {
-      const resp = await fetch('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/'+z+'/'+x+'/'+y+'.png');
+      const resp = await fetch('https://elevation-tiles-prod.s3.amazonaws.com/terrarium/'+z+'/'+x+'/'+y+'.png');
       if (!resp.ok) return null;
       const blob = await resp.blob();
       const bitmap = await createImageBitmap(blob);
