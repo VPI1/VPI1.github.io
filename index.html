@@ -343,7 +343,7 @@ function loadFirebaseSDK(cb) {
   <button class="tb-btn" id="annotate-btn" title="Draw annotations">✎</button>
   <div style="position:relative;display:inline-block;">
     <button class="tb-btn" id="elev-btn" onclick="toggleMapDropdown()" title="Switch map layer">🗺 HYB</button>
-    <div id="elev-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:2100;background:#1c2130;border:1px solid #3a4255;border-radius:7px;box-shadow:0 4px 16px #0009;min-width:140px;padding:4px 0;margin-top:3px;">
+    <div id="elev-dropdown" style="display:none;position:absolute;bottom:100%;left:0;z-index:2100;background:#1c2130;border:1px solid #3a4255;border-radius:7px;box-shadow:0 -4px 16px #0009;min-width:140px;padding:4px 0;margin-bottom:3px;">
       <div class="elev-dd-item" data-mode="hybrid"    onclick="setMapMode('hybrid')">🗺 Hybrid</div>
       <div class="elev-dd-item" data-mode="satellite" onclick="setMapMode('satellite')">🛰 Satellite</div>
       <div class="elev-dd-item" data-mode="elevation" onclick="setMapMode('elevation')">⛰ Elevation</div>
@@ -5075,7 +5075,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BL';
+const VERSION = '2026-08-22-BM';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
