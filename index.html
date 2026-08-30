@@ -285,6 +285,9 @@
     .hz-history-item:hover{border-color:#3254AD;}
     .hz-history-item.hz-active{background:#3254AD;border-color:#3254AD;color:#fff;}
     .elev-hover-stat{font-size:10.5px;color:#eef1f7;min-height:14px;}
+    .elev-dd-item{padding:7px 14px;cursor:pointer;font-size:12px;color:#eef1f7;white-space:nowrap;display:flex;align-items:center;gap:6px;}
+    .elev-dd-item:hover{background:#2a3045;}
+    .elev-dd-item.active{color:#3254AD;font-weight:600;}
   </style>
 <!-- Firebase (loaded on-demand when user configures it) -->
 <script>
@@ -338,7 +341,15 @@ function loadFirebaseSDK(cb) {
   <button class="tb-btn" id="ruler-btn" title="Measure distances">⊾</button>
   <button class="tb-btn" id="hz-btn" onclick="toggleHorizonMode()" title="Line-of-sight horizon tool">⊙</button>
   <button class="tb-btn" id="annotate-btn" title="Draw annotations">✎</button>
-  <button class="tb-btn" id="elev-btn" onclick="cycleMapMode()" title="Switch map layer (Hybrid / Satellite / Elevation)">🗺 HYB</button>
+  <div style="position:relative;display:inline-block;">
+    <button class="tb-btn" id="elev-btn" onclick="toggleMapDropdown()" title="Switch map layer">🗺 HYB</button>
+    <div id="elev-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:2100;background:#1c2130;border:1px solid #3a4255;border-radius:7px;box-shadow:0 4px 16px #0009;min-width:140px;padding:4px 0;margin-top:3px;">
+      <div class="elev-dd-item" data-mode="hybrid"    onclick="setMapMode('hybrid')">🗺 Hybrid</div>
+      <div class="elev-dd-item" data-mode="satellite" onclick="setMapMode('satellite')">🛰 Satellite</div>
+      <div class="elev-dd-item" data-mode="elevation" onclick="setMapMode('elevation')">⛰ Elevation</div>
+      <div class="elev-dd-item" data-mode="osm"       onclick="setMapMode('osm')">🗺 OSM</div>
+    </div>
+  </div>
   <button class="tb-btn" onclick="resetMap()" title="Reset map">↺</button>
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
   <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
@@ -475,7 +486,7 @@ const satelliteLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={
 const hybridLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
   attribution: '&copy; Google', maxZoom: 21, subdomains: '0123'
 });
-const elevationLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+const elevationLayer = L.tileLayer('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenTopoMap contributors', maxZoom: 17, opacity: 0.92,
   subdomains: 'abc'
 });
@@ -491,18 +502,35 @@ const MAP_MODES = ['hybrid', 'satellite', 'elevation', 'osm'];
 const MAP_MODE_LABELS = { hybrid: '🗺 HYB', satellite: '🛰 SAT', elevation: '⛰ ELV', osm: '🗺 OSM' };
 const MAP_MODE_LAYERS = { hybrid: hybridLayer, satellite: satelliteLayer, elevation: elevationLayer, osm: osmLayer };
 
-function cycleMapMode() {
+function toggleMapDropdown() {
+  const dd = document.getElementById('elev-dropdown');
+  if (!dd) return;
+  const open = dd.style.display !== 'none';
+  dd.style.display = open ? 'none' : 'block';
+  if (!open) {
+    dd.querySelectorAll('.elev-dd-item').forEach(el =>
+      el.classList.toggle('active', el.dataset.mode === mapMode));
+    setTimeout(() => document.addEventListener('click', function _eddClose(e) {
+      if (!dd.contains(e.target) && e.target.id !== 'elev-btn') {
+        dd.style.display = 'none';
+        document.removeEventListener('click', _eddClose);
+      }
+    }), 0);
+  }
+}
+function setMapMode(mode) {
   const prev = mapMode;
-  mapMode = MAP_MODES[(MAP_MODES.indexOf(mapMode) + 1) % MAP_MODES.length];
+  document.getElementById('elev-dropdown').style.display = 'none';
+  if (prev === mode) return;
+  mapMode = mode;
   map.removeLayer(MAP_MODE_LAYERS[prev]);
-  MAP_MODE_LAYERS[mapMode].addTo(map);
-  document.getElementById('elev-btn').textContent = MAP_MODE_LABELS[mapMode];
-  document.getElementById('elev-btn').classList.toggle('ruler-on', mapMode === 'elevation');
-  // Boundary contrast: dark dashed on elevation/OSM, white on satellite/hybrid
-  const isLight = mapMode === 'elevation' || mapMode === 'osm';
+  MAP_MODE_LAYERS[mode].addTo(map);
+  document.getElementById('elev-btn').textContent = MAP_MODE_LABELS[mode];
+  document.getElementById('elev-btn').classList.toggle('ruler-on', mode === 'elevation');
+  const isLight = mode === 'elevation' || mode === 'osm';
   gameBoundaryLayer.setStyle({ color: isLight ? '#222' : '#e0e0e0', opacity: isLight ? 0.9 : 0.75 });
 }
-// legacy alias used by the ⛰ button onclick
+function cycleMapMode() { setMapMode(MAP_MODES[(MAP_MODES.indexOf(mapMode)+1)%MAP_MODES.length]); }
 function toggleElevationMap() { cycleMapMode(); }
 
 const OVERPASS_ENDPOINTS = [
@@ -5047,7 +5075,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BK';
+const VERSION = '2026-08-22-BL';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
