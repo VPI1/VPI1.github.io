@@ -5200,7 +5200,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BW';
+const VERSION = '2026-08-22-BW2';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7106,7 +7106,7 @@ setMapMode('terrain');
 map.createPane('terrainMaskPane');
 map.getPane('terrainMaskPane').style.zIndex = '362';
 map.getPane('terrainMaskPane').style.pointerEvents = 'none';
-const terrainMaskLayer = L.layerGroup([], { pane: 'terrainMaskPane' });
+var terrainMaskLayer = L.layerGroup([], { pane: 'terrainMaskPane' });
 
 // ── Wikimapia urban areas (replaces OSM urban on success) ─────────────────────
 async function _initWikimapiaUrban() {
