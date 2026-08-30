@@ -5047,7 +5047,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BJ';
+const VERSION = '2026-08-22-BK';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6647,9 +6647,15 @@ async function droneStartAntenna(m) {
   const latlng = m.getLatLng();
   const terrain = await droneDetectTerrain(latlng);
   // Height: Ukrainian village house roofline ≈ 6–7m; tree ≈ 15m; open field tripod ≈ 2m
-  const heightM = terrain === 'urban' ? 7 : terrain === 'forest' ? 15 : 2;
-  const terrainLabel = { urban: 'residential building (7 m)', forest: 'tree (15 m)', field: 'open field tripod (2 m)' }[terrain];
-  const durSec = terrain === 'urban' ? 90 : terrain === 'forest' ? 60 : 30;
+  if (terrain === 'field') {
+    showToast('No building or treeline here — cannot establish antenna in open field.', '#ef5350');
+    m._antennaPending = null;
+    if (activePanel === m) renderPanel();
+    return;
+  }
+  const heightM = terrain === 'urban' ? 7 : 15;
+  const terrainLabel = { urban: 'residential building (7 m)', forest: 'tree (15 m)' }[terrain];
+  const durSec = terrain === 'urban' ? 90 : 60;
   m._antennaPending = { heightM, startAt: Date.now(), duration: durSec * 1000, terrain };
   if (activePanel === m) renderPanel();
   showToast(`Establishing antenna on ${terrainLabel} — ${durSec} s`, '#ffa726');
