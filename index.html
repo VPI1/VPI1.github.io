@@ -4980,7 +4980,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-AZ';
+const VERSION = '2026-08-22-BA';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5818,6 +5818,8 @@ async function main() {
       return pickSpotForRole(northSide, role);
     }
 
+    document.getElementById('loading-text').textContent = 'Placing units…';
+    await new Promise(r => requestAnimationFrame(r));
     // Guarantee at least 2 artillery per side before random pool
     for (let i = 0; i < 2; i++) {
       for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
@@ -5826,6 +5828,8 @@ async function main() {
       }
     }
 
+    document.getElementById('loading-text').textContent = 'Placing blue forces…';
+    await new Promise(r => requestAnimationFrame(r));
     // ── Blue infantry core (10-13 units) ──
     const numBlueInf = 10 + Math.floor(Math.random() * 4);
     for (let i = 0; i < numBlueInf; i++) {
@@ -5851,6 +5855,8 @@ async function main() {
       createMarker(pt, 'blue', groupSize('mavic'), 'mavic');
     }
 
+    document.getElementById('loading-text').textContent = 'Placing red forces…';
+    await new Promise(r => requestAnimationFrame(r));
     // ── Red infantry core (14-18 units) ──
     const numRedInf = 14 + Math.floor(Math.random() * 5);
     for (let i = 0; i < numRedInf; i++) {
@@ -5884,6 +5890,8 @@ async function main() {
       if (rPt) { markOccupied(rPt, 'infantry', false); createMarker(rPt, 'red',  groupSize('infantry'), 'infantry'); }
     }
 
+    document.getElementById('loading-text').textContent = 'Placing FPV crews…';
+    await new Promise(r => requestAnimationFrame(r));
     // ── FPV ratio: 1 crew per 3 infantry per side ──
     for (const northSide of [true, false]) {
       const side = northSide ? 'blue' : 'red';
