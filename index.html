@@ -486,9 +486,79 @@ const satelliteLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={
 const hybridLayer = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
   attribution: '&copy; Google', maxZoom: 21, subdomains: '0123'
 });
-const elevationLayer = L.tileLayer('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenTopoMap contributors', maxZoom: 17, opacity: 0.92,
-  subdomains: 'abc'
+// ── Elevation layer: B&W hillshade decoded from AWS Terrarium tiles ──────────
+// Ported from playframap.github.io terrain analysis (black & white mode).
+// elev = R*256 + G + B/256 − 32768; auto-rescales to 2nd–98th percentile
+// of tiles currently visible so flat terrain still shows useful contrast.
+let topoRange = { min: -5, max: 360 };
+let topoRecolorTimer = null;
+
+function _elevColorBW(e, min, max) {
+  const t01 = max > min ? Math.max(0, Math.min(1, (e - min) / (max - min))) : 0.5;
+  const v = Math.round(t01 * 255);
+  return [v, v, v, 255];
+}
+function _colorElevTile(tile, min, max) {
+  const ed = tile._elevData; if (!ed) return;
+  const ctx = tile.getContext('2d');
+  const img = ctx.createImageData(tile.width, tile.height);
+  const d = img.data;
+  for (let j = 0, i = 0; j < ed.length; j++, i += 4) {
+    const [r, g, b, a] = _elevColorBW(ed[j], min, max);
+    d[i]=r; d[i+1]=g; d[i+2]=b; d[i+3]=a;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+const HypsometricLayer = L.GridLayer.extend({
+  createTile(coords, done) {
+    const tile = document.createElement('canvas');
+    const sz = this.getTileSize();
+    tile.width = sz.x; tile.height = sz.y;
+    const ctx = tile.getContext('2d');
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, sz.x, sz.y);
+      const src = ctx.getImageData(0, 0, sz.x, sz.y).data;
+      const ed = new Float32Array(sz.x * sz.y);
+      for (let i = 0, j = 0; i < src.length; i += 4, j++)
+        ed[j] = (src[i] * 256 + src[i+1] + src[i+2] / 256) - 32768;
+      tile._elevData = ed;
+      _colorElevTile(tile, topoRange.min, topoRange.max);
+      done(null, tile);
+      _scheduleTopoRecolor();
+    };
+    img.onerror = () => done(null, tile);
+    img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${coords.z}/${coords.x}/${coords.y}.png`;
+    return tile;
+  }
+});
+function _scheduleTopoRecolor() {
+  clearTimeout(topoRecolorTimer);
+  topoRecolorTimer = setTimeout(_recolorTopo, 250);
+}
+function _recolorTopo() {
+  if (!elevationLayer || !elevationLayer._tiles) return;
+  const samples = [], tiles = [];
+  const zoom = map.getZoom();
+  for (const key in elevationLayer._tiles) {
+    const t = elevationLayer._tiles[key];
+    if (t.current && t.el._elevData && t.coords?.z === zoom) {
+      tiles.push(t.el);
+      const ed = t.el._elevData;
+      for (let i = 0; i < ed.length; i += 64) samples.push(ed[i]);
+    }
+  }
+  if (!samples.length) return;
+  samples.sort((a, b) => a - b);
+  const p = pct => samples[Math.floor(pct * (samples.length - 1))];
+  const gMin = Math.max(p(0.02), -50), gMax = Math.min(p(0.98), 600);
+  if (gMax <= gMin) return;
+  topoRange = { min: gMin, max: gMax };
+  tiles.forEach(t => _colorElevTile(t, gMin, gMax));
+}
+const elevationLayer = new HypsometricLayer({
+  attribution: 'Elevation: AWS Terrain Tiles', opacity: 0.9, maxNativeZoom: 14, maxZoom: 19
 });
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
@@ -527,6 +597,8 @@ function setMapMode(mode) {
   MAP_MODE_LAYERS[mode].addTo(map);
   document.getElementById('elev-btn').textContent = MAP_MODE_LABELS[mode];
   document.getElementById('elev-btn').classList.toggle('ruler-on', mode === 'elevation');
+  if (prev === 'elevation') { map.off('moveend zoomend', _scheduleTopoRecolor); clearTimeout(topoRecolorTimer); }
+  if (mode === 'elevation') { map.on('moveend zoomend', _scheduleTopoRecolor); _scheduleTopoRecolor(); }
   const isLight = mode === 'elevation' || mode === 'osm';
   gameBoundaryLayer.setStyle({ color: isLight ? '#222' : '#e0e0e0', opacity: isLight ? 0.9 : 0.75 });
 }
@@ -5075,7 +5147,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BM';
+const VERSION = '2026-08-22-BN';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
