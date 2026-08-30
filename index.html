@@ -1952,11 +1952,14 @@ function exitCombatMode() {
 let panelRangeCircle = null;
 let panelRangeCircleMax = null;  // outer max-range ring
 let panelHorizonCircle = null;   // radio horizon for FPV/mavic
+let panelAntennaCircles = [];     // relay antenna coverage rings
 
 function clearPanelRange() {
   if (panelRangeCircle)    { map.removeLayer(panelRangeCircle);    panelRangeCircle = null; }
   if (panelRangeCircleMax) { map.removeLayer(panelRangeCircleMax); panelRangeCircleMax = null; }
   if (panelHorizonCircle)  { map.removeLayer(panelHorizonCircle);  panelHorizonCircle = null; }
+  panelAntennaCircles.forEach(c => { try { map.removeLayer(c); } catch(e) {} });
+  panelAntennaCircles = [];
 }
 
 // Primary (effective) range shown as inner filled circle
@@ -2001,17 +2004,25 @@ function showPanelRange(m) {
       weight: 2, opacity: 0.55, dashArray: '5 10'
     }).addTo(map);
   }
-  // Radio horizon — dotted outermost ring
-  if (m._role === 'fpv') {
-    panelHorizonCircle = L.circle(m.getLatLng(), {
-      radius: FPV_RADIO_HORIZON_M, color: '#ff5252', fill: true,
-      fillColor: '#ff5252', fillOpacity: 0.06, weight: 1.5, opacity: 0.55, dashArray: '3 9'
+  // Radio horizon — signal range based on antenna height (physics formula)
+  if (m._role === 'fpv' || m._role === 'mavic') {
+    const _sigR   = droneSignalRangeM(m);
+    const _sigCol = m._role === 'fpv' ? '#ff5252' : '#00e5ff';
+    const _sigOp  = m._role === 'fpv' ? 0.55 : 0.50;
+    const _sigCtr = m._antennaPos ?? m.getLatLng();
+    panelHorizonCircle = L.circle(_sigCtr, {
+      radius: _sigR, color: _sigCol, fill: true,
+      fillColor: _sigCol, fillOpacity: 0.06, weight: 1.5, opacity: _sigOp, dashArray: '3 9'
     }).addTo(map);
-  } else if (m._role === 'mavic') {
-    panelHorizonCircle = L.circle(m.getLatLng(), {
-      radius: MAVIC_CTRL_HORIZON_M, color: '#00e5ff', fill: true,
-      fillColor: '#00e5ff', fillOpacity: 0.06, weight: 1.5, opacity: 0.5, dashArray: '3 9'
-    }).addTo(map);
+    // Show relay antenna coverage from other friendly antennas
+    for (const _ant of droneAntennas) {
+      if (_ant.side !== m._side || _ant.unit === m) continue;
+      const _ar = L.circle(_ant.latlng, {
+        radius: sigHorizon(_ant.heightM) + sigHorizon(m._role === 'mavic' ? 200 : 30),
+        color: _sigCol, fill: false, weight: 1, opacity: 0.35, dashArray: '5 8'
+      }).addTo(map);
+      panelAntennaCircles.push(_ar);
+    }
   }
 }
 
@@ -2168,6 +2179,24 @@ function _buildActTab(m, now, moving) {
       h += _pb(`Cooldown <span id="fpv-cd">${fmtETA(Math.ceil((m._fpvCooldownUntil-now)/1000))}</span>`, '○', '', '', true);
     else
       h += _pb(`Launch FPV Strike${m._drones>0?` · ${m._drones} drones`:' · no drones'}`, '⊕', 'atk', "_pa('fpv-strike')", m._drones<=0);
+  }
+
+  if (m._role === 'fpv' || m._role === 'mavic') {
+    h += `<div class="psec">Relay Antenna</div>`;
+    if (m._antennaPending) {
+      const _aRem = Math.max(0, Math.ceil((m._antennaPending.startAt + m._antennaPending.duration - now) / 1000));
+      h += _pb(`Setting up… ${_aRem}s`, '📡', '', '', true);
+      h += _pb('Cancel', '✕', 'atk', "_pa('cancel-antenna')");
+    } else if (m._antennaHeightM) {
+      const _sigKm = (droneSignalRangeM(m) / 1000).toFixed(0);
+      const _aLabel = m._antennaEntry?.terrain === 'urban' ? 'building'
+        : m._antennaEntry?.terrain === 'forest' ? 'tree' : 'tripod';
+      h += _pb(`Active · ${_aLabel} ${m._antennaHeightM}m · ~${_sigKm} km range`, '📡', 'tac', '', true);
+      h += _pb('Remove Antenna', '✕', '', "_pa('remove-antenna')");
+    } else {
+      const _antMoving = movingMarkers.has(m);
+      h += _pb('Establish Antenna Here', '📡', 'tac', "_pa('establish-antenna')", _antMoving);
+    }
   }
 
   if (m._role === 'mavic') {
@@ -2495,6 +2524,9 @@ window._pa = function(action) {
     const _inc = [...activeFights.entries()].find(([,f]) => f.defender === m);
     if (_inc) { endFight(_inc[0]); showToast('Broke off engagement.', '#90caf9'); }
   }
+  else if (action === 'establish-antenna') { droneStartAntenna(m); }
+  else if (action === 'cancel-antenna')    { droneCancelAntenna(m); }
+  else if (action === 'remove-antenna')    { droneRemoveAntenna(m); }
   else if (action === 'attack-sel') {
     cancelDraw();
     m._engagedSoldierIds = new Set(m._selectedSoldierIds);
@@ -5008,7 +5040,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BH';
+const VERSION = '2026-08-22-BI';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6553,6 +6585,151 @@ map.on('click',(e)=>{
     hzCalcAt(e.latlng);
   }
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RELAY ANTENNA & RADIO SIGNAL SYSTEM
+// Physics: range = sqrt(2 * (4/3 * 6371000) * h_ant) + sqrt(2 * R * h_drone)
+// Antenna established on top of building (7m), tree (15m) or tripod (2m)
+// based on Overpass API terrain query at the unit's position.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const _SIG_R_EFF = 6371000 * 4 / 3; // 4/3-Earth effective radius
+
+/** Radio horizon contribution from a single height above ground */
+function sigHorizon(h) { return Math.sqrt(2 * _SIG_R_EFF * Math.max(0, h)); }
+
+/**
+ * Total signal range for a drone unit.
+ * Base = practical hardware limit (FPV_RADIO_HORIZON_M / MAVIC_CTRL_HORIZON_M).
+ * With antenna: add the physics bonus vs ground-level operator (1.8m).
+ */
+function droneSignalRangeM(m) {
+  const base = m._role === 'mavic' ? MAVIC_CTRL_HORIZON_M : FPV_RADIO_HORIZON_M;
+  if (!m._antennaHeightM) return base;
+  const bonus = sigHorizon(m._antennaHeightM) - sigHorizon(1.8);
+  return Math.round(base + Math.max(0, bonus));
+}
+
+const droneAntennas = [];       // [{latlng, heightM, terrain, marker, side, unit}]
+const pendingAntennaTimers = new Map(); // unit marker → timeoutId
+
+/** Overpass API query to detect building or forest within 50m */
+async function droneDetectTerrain(latlng) {
+  try {
+    const q = '[out:json][timeout:8];('
+      + `way["building"](around:50,${latlng.lat},${latlng.lng});`
+      + `node["building"](around:50,${latlng.lat},${latlng.lng});`
+      + `way["landuse"~"^(forest|orchard)$"](around:50,${latlng.lat},${latlng.lng});`
+      + `way["natural"="wood"](around:50,${latlng.lat},${latlng.lng});`
+      + ');out tags;';
+    const resp = await fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
+    if (!resp.ok) return 'field';
+    const data = await resp.json();
+    if (data.elements.some(e => e.tags?.building)) return 'urban';
+    if (data.elements.some(e =>
+      e.tags?.landuse === 'forest' || e.tags?.natural === 'wood' || e.tags?.landuse === 'orchard'
+    )) return 'forest';
+    return 'field';
+  } catch(e) { return 'field'; }
+}
+
+async function droneStartAntenna(m) {
+  if (movingMarkers.has(m)) { showToast('Stop the unit before establishing an antenna.', '#ff9800'); return; }
+  showToast('Scanning terrain…', '#8891a5');
+  const latlng = m.getLatLng();
+  const terrain = await droneDetectTerrain(latlng);
+  // Height: Ukrainian village house roofline ≈ 6–7m; tree ≈ 15m; open field tripod ≈ 2m
+  const heightM = terrain === 'urban' ? 7 : terrain === 'forest' ? 15 : 2;
+  const terrainLabel = { urban: 'residential building (7 m)', forest: 'tree (15 m)', field: 'open field tripod (2 m)' }[terrain];
+  const durSec = terrain === 'urban' ? 90 : terrain === 'forest' ? 60 : 30;
+  m._antennaPending = { heightM, startAt: Date.now(), duration: durSec * 1000, terrain };
+  if (activePanel === m) renderPanel();
+  showToast(`Establishing antenna on ${terrainLabel} — ${durSec} s`, '#ffa726');
+  const tid = setTimeout(() => {
+    pendingAntennaTimers.delete(m);
+    m._antennaPending = null;
+    dronePlaceAntenna(m, heightM, terrain);
+  }, durSec * 1000);
+  pendingAntennaTimers.set(m, tid);
+}
+
+function dronePlaceAntenna(m, heightM, terrain) {
+  droneRemoveAntenna(m, true);
+  m._antennaHeightM = heightM;
+  m._antennaPos = m.getLatLng();
+  m._outOfSignal = false;
+  const icons = { urban: '🏠', forest: '🌲', field: '⚑' };
+  const antMarker = L.marker(m.getLatLng(), {
+    icon: L.divIcon({
+      className: '',
+      html: '<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px #000b);user-select:none;">'
+          + icons[terrain] + '<span style="font-size:10px;vertical-align:super;">📡</span></div>',
+      iconAnchor: [10, 20]
+    }),
+    interactive: false, zIndexOffset: 600
+  }).addTo(map);
+  const entry = { latlng: m.getLatLng(), heightM, terrain, marker: antMarker, side: m._side, unit: m };
+  droneAntennas.push(entry);
+  m._antennaEntry = entry;
+  const rangeKm = (droneSignalRangeM(m) / 1000).toFixed(0);
+  const terrainLabel = { urban: 'building', forest: 'tree', field: 'tripod' }[terrain];
+  showToast(`Antenna on ${terrainLabel} (${heightM} m) · signal range ~${rangeKm} km`, '#66bb6a');
+  if (activePanel === m) { showPanelRange(m); renderPanel(); }
+}
+
+function droneCancelAntenna(m) {
+  const tid = pendingAntennaTimers.get(m);
+  if (tid) clearTimeout(tid);
+  pendingAntennaTimers.delete(m);
+  m._antennaPending = null;
+  if (activePanel === m) renderPanel();
+  showToast('Antenna setup cancelled.', '#888');
+}
+
+function droneRemoveAntenna(m, silent) {
+  if (m._antennaEntry) {
+    try { map.removeLayer(m._antennaEntry.marker); } catch(e) {}
+    const idx = droneAntennas.indexOf(m._antennaEntry);
+    if (idx !== -1) droneAntennas.splice(idx, 1);
+    m._antennaEntry = null;
+  }
+  m._antennaHeightM = null;
+  m._antennaPos     = null;
+  m._outOfSignal    = false;
+  if (!silent) {
+    showToast('Antenna removed.', '#888');
+    if (activePanel === m) { showPanelRange(m); renderPanel(); }
+  }
+}
+
+// ── Signal enforcement loop ───────────────────────────────────────────────
+// Every 4 s: check if any friendly drone with an established antenna has
+// drifted outside its signal range.  If so, stop it and warn the player.
+setInterval(() => {
+  if (!userSide) return;
+  const now = Date.now();
+  for (const m of allMarkers) {
+    if (!m._antennaPos) continue;
+    if (m._side !== userSide) continue;
+    if (!['fpv', 'mavic'].includes(m._role)) continue;
+    const dist = segMeters(markerPos(m), m._antennaPos);
+    const sigR = droneSignalRangeM(m);
+    if (dist > sigR * 1.02) {
+      if (!m._outOfSignal) {
+        m._outOfSignal = true;
+        const label = ROLES[m._role]?.label ?? m._role;
+        showToast(`${label} — signal lost! Stopping unit.`, '#ef5350');
+        if (movingMarkers.has(m)) clearRoute(m);
+      }
+    } else {
+      if (m._outOfSignal) {
+        m._outOfSignal = false;
+        showToast(`${ROLES[m._role]?.label ?? m._role} — signal restored.`, '#66bb6a');
+      }
+    }
+  }
+}, 4000);
 
 </script>
 <div id="sync-log" style="position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.7);color:#0f0;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
