@@ -4980,7 +4980,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BB';
+const VERSION = '2026-08-22-BC';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5589,23 +5589,26 @@ function applySWHandoff(events) {
 
 async function main() {
   try {
-    // Register SW first — it may have fresher state from running while page was closed
-    document.getElementById('loading-text').textContent = 'Restoring saved positions…';
-    await initSW();
-
-    // Ask SW for accumulated events before loading state
+    // Skip SW + GH state when Firebase is configured — Firebase is source of truth,
+    // so those awaits (SW ready + 1500ms timeout + GH fetch) are just wasted time.
+    const _hasFBConfig = !!(getFBConfig()?.databaseURL);
     let swHandoffEvents = null;
-    if (navigator.serviceWorker?.controller) {
-      swHandoffEvents = await new Promise(resolve => {
-        const ch = new MessageChannel();
-        ch.port1.onmessage = e => resolve(e.data?.events ?? null);
-        navigator.serviceWorker.controller.postMessage({ type: 'PAGE_OPEN' }, [ch.port2]);
-        setTimeout(() => resolve(null), 1500); // fallback if SW doesn't respond
-      });
+    if (!_hasFBConfig) {
+      // Register SW first — it may have fresher state from running while page was closed
+      document.getElementById('loading-text').textContent = 'Restoring saved positions…';
+      await initSW();
+      if (navigator.serviceWorker?.controller) {
+        swHandoffEvents = await new Promise(resolve => {
+          const ch = new MessageChannel();
+          ch.port1.onmessage = e => resolve(e.data?.events ?? null);
+          navigator.serviceWorker.controller.postMessage({ type: 'PAGE_OPEN' }, [ch.port2]);
+          setTimeout(() => resolve(null), 1500); // fallback if SW doesn't respond
+        });
+      }
     }
 
     // Try GitHub state (may be newer — GH Actions ticks while nobody is online)
-    const ghState = await loadFromGitHub();
+    const ghState = _hasFBConfig ? null : await loadFromGitHub();
     const lsRaw   = (() => { try { return JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { return null; } })();
     let bestState = null;
     if (ghState?.units?.length && lsRaw?.units?.length) {
@@ -5614,7 +5617,6 @@ async function main() {
       bestState = ghState?.units?.length ? ghState : lsRaw;
     }
     // When Firebase is configured it is the source of truth — always spawn fresh
-    const _hasFBConfig = !!(getFBConfig()?.databaseURL);
     if (_hasFBConfig) {
       bestState = null;
       try { localStorage.removeItem(SAVE_KEY); } catch {}
