@@ -507,7 +507,7 @@ async function fetchAndExtractTerrain(bbox, q) {
     const raw = localStorage.getItem(cacheKey);
     if (raw) {
       // Yield two frames BEFORE the blocking JSON.parse so loading screen paints
-      document.getElementById('loading-text').textContent = 'Loading terrain from cache…';
+      document.getElementById('loading-text').textContent = 'Cache hit — parsing…';
       await new Promise(r => requestAnimationFrame(r));
       await new Promise(r => requestAnimationFrame(r));
       const cached = JSON.parse(raw);
@@ -4980,7 +4980,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BC';
+const VERSION = '2026-08-22-BD';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5588,6 +5588,9 @@ function applySWHandoff(events) {
 }
 
 async function main() {
+  const _t0 = Date.now();
+  const _ts = () => ((Date.now()-_t0)/1000).toFixed(1)+'s';
+  const _ltxt = s => { document.getElementById('loading-text').textContent = s; };
   try {
     // Skip SW + GH state when Firebase is configured — Firebase is source of truth,
     // so those awaits (SW ready + 1500ms timeout + GH fetch) are just wasted time.
@@ -5595,7 +5598,7 @@ async function main() {
     let swHandoffEvents = null;
     if (!_hasFBConfig) {
       // Register SW first — it may have fresher state from running while page was closed
-      document.getElementById('loading-text').textContent = 'Restoring saved positions…';
+      _ltxt('Restoring… +' + _ts());
       await initSW();
       if (navigator.serviceWorker?.controller) {
         swHandoffEvents = await new Promise(resolve => {
@@ -5681,7 +5684,7 @@ async function main() {
       return;
     }
 
-    document.getElementById('loading-text').textContent = 'Fetching map data…';
+    _ltxt('Fetching map data… +' + _ts());
     const _lats2 = GAME_BOUNDARY.map(p=>p[0]), _lngs2 = GAME_BOUNDARY.map(p=>p[1]);
     const _bbox2 = `${Math.min(..._lats2)-0.01},${Math.min(..._lngs2)-0.01},${Math.max(..._lats2)+0.01},${Math.max(..._lngs2)+0.01}`;
     const _q2 = `[out:json][timeout:60];(
@@ -5699,6 +5702,8 @@ async function main() {
     way["bridge"="yes"]["highway"](${_bbox2});
     );out body;>;out skel qt;`;
     const ext = await fetchAndExtractTerrain(_bbox2, _q2);
+    _ltxt('Terrain done +' + _ts() + ' — spawning…');
+    await new Promise(r => requestAnimationFrame(r));
     urbanAnchors = ext.anchors;
     terrainPolys = ext.polys;
     spawnPolys   = terrainPolys; // module-level alias used by spawn helpers
@@ -5826,7 +5831,7 @@ async function main() {
       return pickSpotForRole(northSide, role);
     }
 
-    document.getElementById('loading-text').textContent = 'Placing units…';
+    _ltxt('Placing units… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // Guarantee at least 2 artillery per side before random pool
     for (let i = 0; i < 2; i++) {
@@ -5836,7 +5841,7 @@ async function main() {
       }
     }
 
-    document.getElementById('loading-text').textContent = 'Placing blue forces…';
+    _ltxt('Blue forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Blue infantry core (10-13 units) ──
     const numBlueInf = 10 + Math.floor(Math.random() * 4);
@@ -5863,7 +5868,7 @@ async function main() {
       createMarker(pt, 'blue', groupSize('mavic'), 'mavic');
     }
 
-    document.getElementById('loading-text').textContent = 'Placing red forces…';
+    _ltxt('Red forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Red infantry core (14-18 units) ──
     const numRedInf = 14 + Math.floor(Math.random() * 5);
@@ -5898,7 +5903,7 @@ async function main() {
       if (rPt) { markOccupied(rPt, 'infantry', false); createMarker(rPt, 'red',  groupSize('infantry'), 'infantry'); }
     }
 
-    document.getElementById('loading-text').textContent = 'Placing FPV crews…';
+    _ltxt('FPV crews… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── FPV ratio: 1 crew per 3 infantry per side ──
     for (const northSide of [true, false]) {
@@ -5924,7 +5929,7 @@ async function main() {
     } catch {}
     } else {
     // Fast cache path — create markers in batches of 10 so browser stays responsive
-    document.getElementById('loading-text').textContent = 'Restoring units…';
+    _ltxt('Restoring units… +' + _ts());
     for (let _ci = 0; _ci < _scData.length; _ci++) {
       const _cu = _scData[_ci];
       createMarker(_cu.pos, _cu.side, _cu.count, _cu.role);
