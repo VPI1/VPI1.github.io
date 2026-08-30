@@ -262,6 +262,29 @@
       z-index: 9999; color: #ef9a9a;
       font-size: 14px; padding: 30px; text-align: center;
     }
+
+    /* ── Horizon / line-of-sight tool ── */
+    #hzPanel{
+      position:fixed;top:50px;right:12px;z-index:1200;
+      background:#1c2130;border:1px solid #3a4255;border-radius:10px;
+      box-shadow:0 4px 20px #0009;padding:10px 12px;font-size:12.5px;
+      display:none;flex-direction:column;gap:7px;
+      width:min(460px,calc(100vw - 24px));max-height:calc(100vh - 60px);overflow-y:auto;
+    }
+    #hzPanel.hz-open{display:flex;}
+    .hz-header{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .hz-micro{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#8891a5;margin-bottom:2px;}
+    .hz-progress-track{width:100%;height:4px;background:#3a4255;border-radius:2px;overflow:hidden;display:none;}
+    .hz-progress-fill{height:100%;width:0%;background:#3254AD;transition:width .12s linear;}
+    .hz-pano-wrap,.hz-profile-wrap{width:100%;}
+    .hz-history-list{display:flex;flex-wrap:wrap;gap:5px;max-height:68px;overflow-y:auto;}
+    .hz-history-item{
+      padding:3px 7px;border-radius:5px;border:1px solid #3a4255;
+      background:transparent;color:inherit;cursor:pointer;font-size:10.5px;white-space:nowrap;
+    }
+    .hz-history-item:hover{border-color:#3254AD;}
+    .hz-history-item.hz-active{background:#3254AD;border-color:#3254AD;color:#fff;}
+    .elev-hover-stat{font-size:10.5px;color:#eef1f7;min-height:14px;}
   </style>
 <!-- Firebase (loaded on-demand when user configures it) -->
 <script>
@@ -277,6 +300,572 @@ function loadFirebaseSDK(cb) {
   };
   document.head.appendChild(s1);
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// HORIZON TOOL — ported from playframap.github.io
+// Computes the real line-of-sight boundary from a clicked point,
+// accounting for Earth curvature + terrain (AWS Terrarium DEM tiles).
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Elevation tile cache (AWS Terrarium, same source as playframap) ──
+const HZ_ELEV_ZOOM = 11;
+const hzElevCache = new Map();
+function hzFetchElevTile(z, x, y) {
+  const key = z+':'+x+':'+y;
+  if (hzElevCache.has(key)) return hzElevCache.get(key);
+  const p = (async () => {
+    try {
+      const resp = await fetch('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/'+z+'/'+x+'/'+y+'.png');
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width; canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+      const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const elev = new Float32Array(canvas.width * canvas.height);
+      for (let i = 0, j = 0; i < d.length; i += 4, j++)
+        elev[j] = (d[i] * 256 + d[i+1] + d[i+2] / 256) - 32768;
+      return { elev, w: canvas.width, h: canvas.height };
+    } catch(e) { return null; }
+  })();
+  hzElevCache.set(key, p);
+  return p;
+}
+async function hzFetchElevAt(latlng, zoom) {
+  const z = zoom || 14;
+  const point = map.project(latlng, z);
+  const tileX = Math.floor(point.x / 256), tileY = Math.floor(point.y / 256);
+  const tile = await hzFetchElevTile(z, tileX, tileY);
+  if (!tile) return null;
+  const px = Math.floor(point.x - tileX * 256), py = Math.floor(point.y - tileY * 256);
+  const v = tile.elev[py * tile.w + px];
+  return v === undefined ? null : v;
+}
+
+// ── Constants ──
+const HZ_EARTH_R_EFF = 6371000 * 4 / 3;
+const HZ_EYE_M = 1.8;
+const HZ_NUM_BEARINGS = 300;
+const HZ_SAMPLES_PER_RAY = 90;
+const HZ_MAX_RANGE_CAP_M = 80000;
+const HZ_RASTER_DIM = 1500;
+
+// ── Geo helpers ──
+function hzDest(latlng, bearingDeg, distM) {
+  const R = 6371000, brng = bearingDeg * Math.PI / 180;
+  const lat1 = latlng.lat * Math.PI / 180, lng1 = latlng.lng * Math.PI / 180;
+  const dR = distM / R;
+  const lat2 = Math.asin(Math.sin(lat1)*Math.cos(dR)+Math.cos(lat1)*Math.sin(dR)*Math.cos(brng));
+  const lng2 = lng1 + Math.atan2(Math.sin(brng)*Math.sin(dR)*Math.cos(lat1), Math.cos(dR)-Math.sin(lat1)*Math.sin(lat2));
+  return L.latLng(lat2*180/Math.PI, ((lng2*180/Math.PI)+540)%360-180);
+}
+function hzBearing(from, to) {
+  const lat1 = from.lat*Math.PI/180, lat2 = to.lat*Math.PI/180;
+  const dL = (to.lng-from.lng)*Math.PI/180;
+  const y = Math.sin(dL)*Math.cos(lat2);
+  const x = Math.cos(lat1)*Math.sin(lat2)-Math.sin(lat1)*Math.cos(lat2)*Math.cos(dL);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
+function hzNearestRay(entry, bearing) {
+  let best=0, bestD=Infinity;
+  entry.horizonAngles.forEach((a,i) => {
+    const d = Math.abs(((a.bearing-bearing+540)%360)-180);
+    if (d < bestD) { bestD=d; best=i; }
+  });
+  return best;
+}
+function hzFmtBearing(deg) {
+  const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg/22.5)%16]+' '+Math.round(deg)+'°';
+}
+function hzCurvDrop(distM) { return (distM*distM)/(2*HZ_EARTH_R_EFF); }
+
+// ── Chart hover map marker (shared) ──
+let hzChartMarker = null;
+function hzShowMapMarker(latlng) {
+  if (!latlng) return;
+  if (hzChartMarker) hzChartMarker.setLatLng(latlng);
+  else hzChartMarker = L.circleMarker(latlng, {radius:7,color:'#fff',weight:2,fillColor:'#e0a83f',fillOpacity:1}).addTo(map);
+  hzChartMarker.bringToFront();
+}
+function hzHideMapMarker() {
+  if (hzChartMarker) { map.removeLayer(hzChartMarker); hzChartMarker = null; }
+}
+
+// ── Zoom/pan for chart SVGs ──
+function hzWireZoomPan(svg, getDomain, setDomain, domainMax, onChange) {
+  const MIN_FRAC = 0.01;
+  function clamp(min, max) {
+    if (min < 0) { max -= min; min = 0; }
+    if (max > domainMax) { min -= (max-domainMax); max = domainMax; }
+    return [Math.max(0,min), Math.min(domainMax,max)];
+  }
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const frac = Math.min(1,Math.max(0,(e.clientX-rect.left)/rect.width));
+    const {min,max} = getDomain(), span = max-min;
+    const cursorVal = min+frac*span;
+    const factor = e.deltaY>0 ? 1.25 : 1/1.25;
+    const newSpan = Math.min(domainMax,Math.max(domainMax*MIN_FRAC,span*factor));
+    const [nm,nx] = clamp(cursorVal-frac*newSpan, cursorVal-frac*newSpan+newSpan);
+    setDomain(nm,nx); onChange();
+  }, {passive:false});
+  let drag=false, dragMoved=false, dragX=0, dragMin=0, dragMax=0;
+  svg.addEventListener('pointerdown', (e) => {
+    drag=true; dragMoved=false;
+    try{svg.setPointerCapture(e.pointerId);}catch(err){}
+    const {min,max}=getDomain(); dragX=e.clientX; dragMin=min; dragMax=max;
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    if (Math.abs(e.clientX-dragX)>3) dragMoved=true;
+    if (!dragMoved) return;
+    const span=dragMax-dragMin, shift=-((e.clientX-dragX)/rect.width)*span;
+    const [nm,nx]=clamp(dragMin+shift,dragMax+shift);
+    setDomain(nm,nx); onChange();
+  });
+  function end(e){drag=false;try{svg.releasePointerCapture(e.pointerId);}catch(err){}}
+  svg.addEventListener('pointerup',end); svg.addEventListener('pointercancel',end);
+  return {wasDragged:()=>dragMoved};
+}
+
+// ── Panorama chart ──
+const HZ_PANO_PAD = {L:26,R:8,T:8,B:16};
+function hzPanoGeo(horizonAngles, W, H, domain) {
+  const pool = horizonAngles.filter(a=>a.angleDeg!==null&&a.bearing>=domain.min&&a.bearing<=domain.max);
+  const all  = horizonAngles.filter(a=>a.angleDeg!==null);
+  const src  = pool.length?pool:all;
+  const maxA = Math.max(...src.map(a=>a.angleDeg), 0.5);
+  const {L:pL,R:pR,T:pT,B:pB} = HZ_PANO_PAD;
+  const w=W-pL-pR, h=H-pT-pB;
+  return {
+    pL,pT,w,h,maxA,domain,
+    xOf:(b)=>pL+((b-domain.min)/(domain.max-domain.min))*w,
+    yOf:(a)=>pT+h-(Math.max(a,0)/Math.max(maxA,1))*h
+  };
+}
+function hzBuildPanoSvg(horizonAngles, W, H, domain) {
+  const valid = horizonAngles.filter(a=>a.angleDeg!==null);
+  if (valid.length<2) return '<div style="font-size:11px;color:#8891a5;padding:6px 0;">Not enough terrain data.</div>';
+  const geo = hzPanoGeo(horizonAngles, W, H, domain);
+  const {pL,pT,w,h,maxA} = geo;
+  let pathD='', started=false;
+  horizonAngles.forEach(a=>{
+    if (a.angleDeg===null||a.bearing<domain.min||a.bearing>domain.max){started=false;return;}
+    const x=geo.xOf(a.bearing),y=geo.yOf(a.angleDeg);
+    pathD+=(started?'L':'M')+x.toFixed(1)+','+y.toFixed(1);
+    started=true;
+  });
+  const areaD = pathD?(pathD+' L'+(pL+w).toFixed(1)+','+(pT+h).toFixed(1)+' L'+pL.toFixed(1)+','+(pT+h).toFixed(1)+' Z'):'';
+  const ticks=[{deg:0,l:'N'},{deg:45,l:'NE'},{deg:90,l:'E'},{deg:135,l:'SE'},
+               {deg:180,l:'S'},{deg:225,l:'SW'},{deg:270,l:'W'},{deg:315,l:'NW'}]
+    .filter(t=>t.deg>=domain.min&&t.deg<=domain.max);
+  const ticksSvg=ticks.map(t=>{
+    const x=geo.xOf(t.deg).toFixed(1), major=t.deg%90===0;
+    return '<line x1="'+x+'" y1="'+pT+'" x2="'+x+'" y2="'+(pT+h)+'" stroke="#3a4255" stroke-width="1" stroke-dasharray="'+(major?'0':'2 3')+'" opacity="'+(major?'0.7':'0.35')+'"/>'+
+      '<text x="'+x+'" y="'+(H-3)+'" font-size="9" fill="'+(major?'#eef1f7':'#8891a5')+'" text-anchor="middle">'+t.l+'</text>';
+  }).join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="none" style="display:block;cursor:crosshair;touch-action:none;">'+
+    '<rect x="'+pL+'" y="'+pT+'" width="'+w+'" height="'+h+'" fill="#ff9e4a08"/>'+
+    ticksSvg+
+    '<path d="'+areaD+'" fill="#ff9e4a" fill-opacity="0.22" stroke="none"/>'+
+    '<path d="'+pathD+'" fill="none" stroke="#ff9e4a" stroke-width="1.6"/>'+
+    '<line x1="'+pL+'" y1="'+pT+'" x2="'+pL+'" y2="'+(pT+h)+'" stroke="#3a4255" stroke-width="1"/>'+
+    '<line x1="'+pL+'" y1="'+(pT+h)+'" x2="'+(pL+w)+'" y2="'+(pT+h)+'" stroke="#3a4255" stroke-width="1"/>'+
+    '<text x="2" y="'+(pT+8)+'" font-size="9" fill="#8891a5">+'+maxA.toFixed(1)+'°</text>'+
+    '<text x="2" y="'+(pT+h)+'" font-size="9" fill="#8891a5">0.0°</text>'+
+    '<line class="hz-hover-line" x1="0" y1="'+pT+'" x2="0" y2="'+(pT+h)+'" stroke="#eef1f7" stroke-width="1" stroke-dasharray="3 2" opacity="0" pointer-events="none"/>'+
+    '<circle class="hz-hover-dot" r="4.5" fill="#ff9e4a" stroke="#0d1117" stroke-width="2" opacity="0" pointer-events="none"/>'+
+    '</svg>'+
+    '<div class="elev-hover-stat hz-pano-stat">&nbsp;</div>';
+}
+function hzWirePanoHover(wrapEl, entry, W, H, domain) {
+  const svg=wrapEl.querySelector('svg'); if (!svg) return;
+  const geo=hzPanoGeo(entry.horizonAngles,W,H,domain);
+  const {pL,w}=geo;
+  const hl=svg.querySelector('.hz-hover-line'), hd=svg.querySelector('.hz-hover-dot');
+  const stat=wrapEl.querySelector('.hz-pano-stat');
+  function idxFromX(clientX) {
+    const rect=svg.getBoundingClientRect(); if (!rect.width) return null;
+    const xPx=(clientX-rect.left)*(W/rect.width);
+    const frac=Math.min(1,Math.max(0,(xPx-pL)/w));
+    const bearing=domain.min+frac*(domain.max-domain.min);
+    return hzNearestRay(entry,bearing);
+  }
+  function showAt(idx) {
+    const a=entry.horizonAngles[idx];
+    if (!a||a.angleDeg===null||a.bearing<domain.min||a.bearing>domain.max) return false;
+    const x=geo.xOf(a.bearing),y=geo.yOf(a.angleDeg);
+    hl.setAttribute('x1',x);hl.setAttribute('x2',x);hl.setAttribute('opacity','0.6');
+    hd.setAttribute('cx',x);hd.setAttribute('cy',y);hd.setAttribute('opacity','1');
+    stat.innerHTML=hzFmtBearing(a.bearing)+' <b style="color:#ff9e4a;">'+(a.angleDeg>=0?'+':'')+a.angleDeg.toFixed(1)+'°</b>';
+    if (entry.frontier[idx]) hzShowMapMarker(entry.frontier[idx]);
+    return true;
+  }
+  function revert(){
+    if (!showAt(hzSelectedIdx)){hl.setAttribute('opacity','0');hd.setAttribute('opacity','0');stat.innerHTML='&nbsp;';hzHideMapMarker();}
+  }
+  const zp=hzWireZoomPan(svg,()=>hzPanoDomain,(mn,mx)=>{hzPanoDomain={min:mn,max:mx};},360,()=>hzRenderPano(entry));
+  svg.addEventListener('pointermove',(e)=>{const i=idxFromX(e.clientX);if(i!==null)showAt(i);});
+  svg.addEventListener('pointerleave',revert);
+  svg.addEventListener('click',(e)=>{if(zp.wasDragged())return;const i=idxFromX(e.clientX);if(i!==null)hzSelectBearing(entry,i);});
+  revert();
+}
+let hzPanoDomain=null;
+function hzRenderPano(entry) {
+  if (!hzPanoDomain) hzPanoDomain={min:0,max:360};
+  const w=document.getElementById('hzPanoWrap');
+  w.innerHTML='<div class="hz-micro">Horizon panorama — click a direction, on the map or here, to inspect it. Scroll to zoom, drag to pan.</div>'+
+    hzBuildPanoSvg(entry.horizonAngles,420,96,hzPanoDomain);
+  hzWirePanoHover(w,entry,420,96,hzPanoDomain);
+}
+
+// ── Profile chart ──
+const HZ_PROFILE_DENSE = 220;
+const HZ_PROFILE_PAD = {L:40,R:8,T:8,B:16};
+let hzProfileReqId=0, hzProfileSamples=null, hzProfileDomain=null;
+async function hzFetchDenseProfile(entry, idx) {
+  const a=entry.horizonAngles[idx]; if (!a) return null;
+  const dists=[];
+  for (let i=1;i<=HZ_PROFILE_DENSE;i++) dists.push(entry.maxRangeM*(i/HZ_PROFILE_DENSE));
+  const latlngs=dists.map(d=>hzDest(entry.point,a.bearing,d));
+  const elevs=await Promise.all(latlngs.map(p=>hzFetchElevAt(p,HZ_ELEV_ZOOM)));
+  return dists.map((d,i)=>({distM:d,elevM:elevs[i],latlng:latlngs[i]}));
+}
+function hzProfileGeo(samples,eyeAbs,slope,W,H,domain){
+  const groundY=s=>s.elevM-hzCurvDrop(s.distM), losY=d=>eyeAbs+slope*d;
+  const inR=samples.filter(s=>s.elevM!==null&&s.distM>=domain.min&&s.distM<=domain.max);
+  const {L:pL,R:pR,T:pT,B:pB}=HZ_PROFILE_PAD, w=W-pL-pR, h=H-pT-pB;
+  const gVals=inR.map(groundY);
+  const losS=losY(domain.min),losE=losY(domain.max);
+  const minE=Math.min(...(gVals.length?gVals:[losS]),losS,losE);
+  const maxE=Math.max(...(gVals.length?gVals:[losS]),losS,losE);
+  const range=Math.max(maxE-minE,1);
+  return {pL,pT,w,h,minE,maxE,range,groundY,losY,
+    xOf:d=>pL+((d-domain.min)/(domain.max-domain.min))*w,
+    yOf:e=>pT+h-((e-minE)/range)*h};
+}
+function hzBuildProfileSvg(samples,eyeAbs,slope,W,H,domain){
+  const valid=samples.filter(s=>s.elevM!==null&&s.distM>=domain.min&&s.distM<=domain.max);
+  if (valid.length<2) return '<div style="font-size:11px;color:#8891a5;padding:6px 0;">Not enough terrain data along this direction.</div>';
+  const geo=hzProfileGeo(samples,eyeAbs,slope,W,H,domain);
+  const {pL,pT,w,h,minE,maxE,groundY,losY,xOf,yOf}=geo;
+  let pathD='',started=false;
+  samples.forEach(s=>{
+    if (s.elevM===null||s.distM<domain.min||s.distM>domain.max){started=false;return;}
+    const x=xOf(s.distM),y=yOf(groundY(s));
+    pathD+=(started?'L':'M')+x.toFixed(1)+','+y.toFixed(1);
+    started=true;
+  });
+  const areaD=pathD+' L'+xOf(domain.max).toFixed(1)+','+(pT+h).toFixed(1)+' L'+xOf(domain.min).toFixed(1)+','+(pT+h).toFixed(1)+' Z';
+  const losD='M'+xOf(domain.min).toFixed(1)+','+yOf(losY(domain.min)).toFixed(1)+' L'+xOf(domain.max).toFixed(1)+','+yOf(losY(domain.max)).toFixed(1);
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="none" style="display:block;cursor:crosshair;touch-action:none;">'+
+    '<line x1="'+pL+'" y1="'+pT+'" x2="'+pL+'" y2="'+(pT+h)+'" stroke="#3a4255" stroke-width="1"/>'+
+    '<line x1="'+pL+'" y1="'+(pT+h)+'" x2="'+(pL+w)+'" y2="'+(pT+h)+'" stroke="#3a4255" stroke-width="1"/>'+
+    '<path d="'+areaD+'" fill="#eef1f7" fill-opacity="0.1" stroke="none"/>'+
+    '<path d="'+pathD+'" fill="none" stroke="#eef1f7" stroke-width="1.4"/>'+
+    '<path d="'+losD+'" fill="none" stroke="#ff9e4a" stroke-width="1.6"/>'+
+    '<text x="2" y="'+(pT+8)+'" font-size="9" fill="#8891a5">'+Math.round(maxE)+'m</text>'+
+    '<text x="2" y="'+(pT+h)+'" font-size="9" fill="#8891a5">'+Math.round(minE)+'m</text>'+
+    '<text x="'+pL+'" y="'+(H-3)+'" font-size="9" fill="#8891a5">'+fmtDist(domain.min)+'</text>'+
+    '<text x="'+(pL+w)+'" y="'+(H-3)+'" font-size="9" fill="#8891a5" text-anchor="end">'+fmtDist(domain.max)+' max</text>'+
+    '<line class="hz-hover-line" x1="0" y1="'+pT+'" x2="0" y2="'+(pT+h)+'" stroke="#eef1f7" stroke-width="1" stroke-dasharray="3 2" opacity="0" pointer-events="none"/>'+
+    '<circle class="hz-hover-dot" r="5" fill="#e0a83f" stroke="#0d1117" stroke-width="2" opacity="0" pointer-events="none"/>'+
+    '</svg>'+
+    '<div class="elev-hover-stat hz-profile-stat">&nbsp;</div>';
+}
+function hzWireProfileHover(wrapEl,samples,eyeAbs,slope,W,H,domain){
+  const svg=wrapEl.querySelector('svg'); if (!svg) return;
+  const valid=samples.filter(s=>s.elevM!==null&&s.distM>=domain.min&&s.distM<=domain.max);
+  if (valid.length<2) return;
+  const geo=hzProfileGeo(samples,eyeAbs,slope,W,H,domain);
+  const {pL,w,groundY,xOf,yOf}=geo;
+  const hl=svg.querySelector('.hz-hover-line'),hd=svg.querySelector('.hz-hover-dot');
+  const stat=wrapEl.querySelector('.hz-profile-stat');
+  function update(clientX){
+    const rect=svg.getBoundingClientRect(); if (!rect.width) return;
+    const xPx=(clientX-rect.left)*(W/rect.width);
+    const frac=Math.min(1,Math.max(0,(xPx-pL)/w));
+    const tgt=domain.min+frac*(domain.max-domain.min);
+    let best=null,bestD=Infinity;
+    valid.forEach(s=>{const d=Math.abs(s.distM-tgt);if(d<bestD){bestD=d;best=s;}});
+    if (!best){hide();return;}
+    const x=xOf(best.distM),y=yOf(groundY(best));
+    hl.setAttribute('x1',x);hl.setAttribute('x2',x);hl.setAttribute('opacity','0.6');
+    hd.setAttribute('cx',x);hd.setAttribute('cy',y);hd.setAttribute('opacity','1');
+    stat.innerHTML=fmtDist(best.distM)+' <b style="color:#3254AD;">'+Math.round(best.elevM)+'m</b>';
+    hzShowMapMarker(best.latlng);
+  }
+  function hide(){hl.setAttribute('opacity','0');hd.setAttribute('opacity','0');stat.innerHTML='&nbsp;';hzHideMapMarker();}
+  hzWireZoomPan(svg,()=>hzProfileDomain,(mn,mx)=>{hzProfileDomain={min:mn,max:mx};},
+    hzProfileSamples?hzProfileSamples[hzProfileSamples.length-1].distM:domain.max,
+    ()=>hzRenderProfileChart());
+  svg.addEventListener('pointermove',(e)=>update(e.clientX));
+  svg.addEventListener('pointerleave',hide);
+}
+function hzRenderProfileChart(){
+  const entry=hzCurrentEntry; if (!entry) return;
+  const idx=hzSelectedIdx, a=entry.horizonAngles[idx];
+  const label=a?hzFmtBearing(a.bearing):'';
+  const w=document.getElementById('hzProfileWrap');
+  if (!hzProfileSamples||!hzProfileSamples.length){
+    w.innerHTML='<div class="hz-micro">Profile — '+label+'</div><div style="font-size:11px;color:#8891a5;padding:6px 0;">Not enough terrain data.</div>';
+    return;
+  }
+  const eyeAbs=Math.max((entry.groundElev||0)+HZ_EYE_M,0);
+  const slope=a&&a.angleDeg!==null?Math.tan(a.angleDeg*Math.PI/180):0;
+  w.innerHTML='<div class="hz-micro">Profile — '+label+' · scroll to zoom, drag to pan</div>'+
+    hzBuildProfileSvg(hzProfileSamples,eyeAbs,slope,420,110,hzProfileDomain);
+  hzWireProfileHover(w,hzProfileSamples,eyeAbs,slope,420,110,hzProfileDomain);
+}
+async function hzRenderProfile(entry,idx){
+  const myId=++hzProfileReqId;
+  const a=entry.horizonAngles[idx], label=a?hzFmtBearing(a.bearing):'';
+  document.getElementById('hzProfileWrap').innerHTML='<div class="hz-micro">Profile — '+label+'</div><div style="font-size:11px;color:#8891a5;padding:6px 0;">Loading profile…</div>';
+  const samples=await hzFetchDenseProfile(entry,idx);
+  if (myId!==hzProfileReqId) return;
+  hzProfileSamples=samples;
+  if (!hzProfileDomain) hzProfileDomain={min:0,max:entry.maxRangeM};
+  hzRenderProfileChart();
+}
+function hzSelectBearing(entry,idx,mapClickLatLng){
+  hzSelectedIdx=idx;
+  hzWirePanoHover(document.getElementById('hzPanoWrap'),entry,420,96,hzPanoDomain||{min:0,max:360});
+  hzRenderProfile(entry,idx);
+  if (mapClickLatLng) hzShowMapMarker(mapClickLatLng);
+}
+
+// ── Visibility raster overlay ──
+let hzRasterUrl=null;
+function hzBuildRaster(entry){
+  const visible=entry.raySamples.flatMap(s=>s.filter(p=>p.visible));
+  if (!visible.length) return null;
+  const {point,maxRangeM,numBearings}=entry;
+  const refLat=point.lat*Math.PI/180;
+  const mLat=111320, mLng=111320*Math.cos(refLat);
+  const dimM=maxRangeM*2, pxPerM=HZ_RASTER_DIM/dimM;
+  const canvas=document.createElement('canvas');
+  canvas.width=canvas.height=HZ_RASTER_DIM;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#ff9e4a';
+  const angSpc=(2*Math.PI)/numBearings;
+  const radStep=maxRangeM/(entry.raySamples[0]?entry.raySamples[0].length:1);
+  visible.forEach(p=>{
+    const dx=(p.latlng.lng-point.lng)*mLng, dy=(p.latlng.lat-point.lat)*mLat;
+    const x=HZ_RASTER_DIM/2+dx*pxPerM, y=HZ_RASTER_DIM/2-dy*pxPerM;
+    const angGapM=p.distM*angSpc;
+    const rM=Math.max(10,Math.max(angGapM,radStep)*0.62);
+    const rPx=Math.max(1.2,rM*pxPerM);
+    ctx.beginPath(); ctx.arc(x,y,rPx,0,Math.PI*2); ctx.fill();
+  });
+  const bounds=L.latLngBounds(
+    L.latLng(point.lat-(dimM/2)/mLat, point.lng-(dimM/2)/mLng),
+    L.latLng(point.lat+(dimM/2)/mLat, point.lng+(dimM/2)/mLng));
+  return {canvas,bounds};
+}
+function hzShowRaster(entry){
+  const built=hzBuildRaster(entry); if (!built) return;
+  built.canvas.toBlob(blob=>{
+    if (!blob||hzCurrentEntry!==entry) return;
+    if (hzRasterUrl) URL.revokeObjectURL(hzRasterUrl);
+    const url=URL.createObjectURL(blob); hzRasterUrl=url;
+    if (hzShape) map.removeLayer(hzShape);
+    hzShape=L.imageOverlay(url,built.bounds,{opacity:0.75,interactive:false}).addTo(map);
+  },'image/webp',0.85);
+}
+
+// ── Core computation ──
+let hzMarker=null, hzShape=null, hzPoint=null, hzCurrentEntry=null;
+let hzSelectedIdx=0, hzReqId=0;
+
+async function hzCalcAt(latlng){
+  hzPoint=latlng;
+  await hzCompute();
+}
+async function hzCompute(){
+  if (!hzPoint) return;
+  const reqId=++hzReqId;
+  const pt=document.getElementById('hzProgressTrack'), pf=document.getElementById('hzProgressFill');
+  pt.style.display='block'; pf.style.width='0%';
+  const groundElev=await hzFetchElevAt(hzPoint);
+  if (reqId!==hzReqId) return;
+  const eyeAbs=Math.max((groundElev||0)+HZ_EYE_M,0);
+  const maxRangeM=Math.min(HZ_MAX_RANGE_CAP_M,Math.max(500,4120*Math.sqrt(eyeAbs)));
+  const rayDists=[];
+  for (let i=1;i<=HZ_SAMPLES_PER_RAY;i++) rayDists.push(maxRangeM*(i/HZ_SAMPLES_PER_RAY));
+  const rays=[];
+  for (let b=0;b<HZ_NUM_BEARINGS;b++){
+    const bearing=(360/HZ_NUM_BEARINGS)*b;
+    rays.push({bearing,latlngs:rayDists.map(d=>hzDest(hzPoint,bearing,d))});
+  }
+  const allPts=rays.flatMap(r=>r.latlngs);
+  let completed=0,lastPct=-1;
+  const allElevs=await Promise.all(allPts.map(p=>hzFetchElevAt(p,HZ_ELEV_ZOOM).then(v=>{
+    completed++;
+    const pct=Math.floor((completed/allPts.length)*100);
+    if (pct!==lastPct&&reqId===hzReqId){lastPct=pct;pf.style.width=pct+'%';}
+    return v;
+  })));
+  if (reqId!==hzReqId) return;
+  let idx=0;
+  const frontier=[], horizonAngles=[], raySamples=[];
+  let minDist=Infinity, maxDist=0;
+  for (const ray of rays){
+    let runMax=-Infinity, lastLL=hzPoint;
+    let lastDist=0;
+    const samples=[];
+    for (let i=0;i<rayDists.length;i++){
+      const e=allElevs[idx++], d=rayDists[i];
+      if (e===null||e===undefined){samples.push({distM:d,elevM:null,latlng:ray.latlngs[i],visible:false});continue;}
+      const angle=(e-(d*d)/(2*HZ_EARTH_R_EFF)-eyeAbs)/d;
+      const visible=angle>=runMax;
+      samples.push({distM:d,elevM:e,latlng:ray.latlngs[i],visible});
+      if (visible){runMax=angle;lastDist=d;lastLL=ray.latlngs[i];}
+    }
+    frontier.push(lastLL);
+    horizonAngles.push({bearing:ray.bearing,angleDeg:runMax===-Infinity?null:Math.atan(runMax)*180/Math.PI});
+    raySamples.push(samples);
+    if (lastDist>0){minDist=Math.min(minDist,lastDist);maxDist=Math.max(maxDist,lastDist);}
+  }
+  const entry={
+    point:hzPoint,frontier,horizonAngles,raySamples,groundElev,
+    minDist:minDist===Infinity?0:minDist,maxDist,maxRangeM,numBearings:HZ_NUM_BEARINGS
+  };
+  hzAddHistory(entry);
+  hzDrawResult(entry);
+}
+
+// ── Draw result ──
+function hzDrawResult(entry){
+  hzPoint=entry.point; hzCurrentEntry=entry; hzSelectedIdx=0;
+  hzPanoDomain=null; hzProfileDomain=null; hzProfileSamples=null;
+  if (hzMarker) map.removeLayer(hzMarker);
+  if (hzShape){map.removeLayer(hzShape);hzShape=null;}
+  hzMarker=L.circleMarker(entry.point,{radius:5,color:'#ff9e4a',weight:2,fillOpacity:1,fillColor:'#12151a',interactive:false}).addTo(map);
+  if (entry.raySamples&&entry.raySamples.length) hzShowRaster(entry);
+  document.getElementById('hzProgressTrack').style.display='none';
+  if (entry.horizonAngles&&entry.horizonAngles.length){
+    hzRenderPano(entry);
+    hzRenderProfile(entry,hzSelectedIdx);
+  }
+}
+
+// ── History ──
+let hzHistory=[], hzHistoryId=1, hzActiveHistId=null;
+const HZ_HIST_MAX=20, HZ_HIST_KEY='vpi1HorizonHistory_v1';
+const hzHistLayerGroup=L.layerGroup();
+function hzAddHistory(entry){
+  entry.id=hzHistoryId++;
+  entry.dotMarker=L.circleMarker(entry.point,{radius:4,color:'#ff9e4a',weight:1.5,fillOpacity:0.6,fillColor:'#ff9e4a'})
+    .addTo(hzHistLayerGroup)
+    .on('click',(e)=>{L.DomEvent.stopPropagation(e);hzShowHistEntry(entry.id);});
+  hzHistory.unshift(entry); hzActiveHistId=entry.id;
+  if (hzHistory.length>HZ_HIST_MAX){const r=hzHistory.pop();hzHistLayerGroup.removeLayer(r.dotMarker);}
+  hzRenderHistList(); hzSaveHistory();
+}
+function hzSaveHistory(){
+  try{
+    const plain=hzHistory.map(h=>({
+      id:h.id,groundElev:h.groundElev,minDist:h.minDist,maxDist:h.maxDist,
+      point:{lat:h.point.lat,lng:h.point.lng},
+      frontier:h.frontier.map(p=>({lat:p.lat,lng:p.lng})),
+      horizonAngles:h.horizonAngles||[],
+      maxRangeM:h.maxRangeM,numBearings:h.numBearings
+    }));
+    localStorage.setItem(HZ_HIST_KEY,JSON.stringify(plain));
+  }catch(e){}
+}
+function hzLoadHistory(){
+  let stored;
+  try{stored=JSON.parse(localStorage.getItem(HZ_HIST_KEY)||'[]');}catch(e){return;}
+  if (!Array.isArray(stored)||!stored.length) return;
+  let maxId=0;
+  hzHistory=stored.slice(0,HZ_HIST_MAX).map(h=>{
+    maxId=Math.max(maxId,h.id||0);
+    const entry={
+      id:h.id,groundElev:h.groundElev,minDist:h.minDist,maxDist:h.maxDist,
+      point:L.latLng(h.point.lat,h.point.lng),
+      frontier:h.frontier.map(p=>L.latLng(p.lat,p.lng)),
+      horizonAngles:h.horizonAngles||[],
+      maxRangeM:h.maxRangeM,numBearings:h.numBearings,raySamples:[]
+    };
+    entry.dotMarker=L.circleMarker(entry.point,{radius:4,color:'#ff9e4a',weight:1.5,fillOpacity:0.6,fillColor:'#ff9e4a'})
+      .addTo(hzHistLayerGroup)
+      .on('click',(e)=>{L.DomEvent.stopPropagation(e);hzShowHistEntry(entry.id);});
+    return entry;
+  });
+  hzHistoryId=maxId+1;
+  hzRenderHistList();
+}
+hzLoadHistory();
+function hzShowHistEntry(id){
+  const entry=hzHistory.find(h=>h.id===id); if (!entry) return;
+  hzReqId++; hzActiveHistId=id; hzDrawResult(entry); hzRenderHistList();
+}
+function hzRenderHistList(){
+  const el=document.getElementById('hzHistoryList'); if (!el) return;
+  if (!hzHistory.length){el.innerHTML='';return;}
+  el.innerHTML=hzHistory.map(h=>
+    '<button class="hz-history-item'+(h.id===hzActiveHistId?' hz-active':'')+'" data-hid="'+h.id+'" title="'+fmtDist(h.minDist)+'–'+fmtDist(h.maxDist)+' range">'+fmtDist(h.maxDist)+' max</button>'
+  ).join('');
+  el.querySelectorAll('.hz-history-item').forEach(btn=>btn.addEventListener('click',()=>hzShowHistEntry(+btn.dataset.hid)));
+}
+
+// ── Clear ──
+function hzClear(){
+  hzPoint=null; hzCurrentEntry=null; hzSelectedIdx=0;
+  hzPanoDomain=null; hzProfileDomain=null; hzProfileSamples=null;
+  hzProfileReqId++; hzReqId++;
+  hzActiveHistId=null;
+  if (hzMarker){map.removeLayer(hzMarker);hzMarker=null;}
+  if (hzShape){map.removeLayer(hzShape);hzShape=null;}
+  if (hzRasterUrl){URL.revokeObjectURL(hzRasterUrl);hzRasterUrl=null;}
+  document.getElementById('hzProgressTrack').style.display='none';
+  document.getElementById('hzPanoWrap').innerHTML='';
+  document.getElementById('hzProfileWrap').innerHTML='';
+  hzHideMapMarker();
+  hzHistory.forEach(h=>hzHistLayerGroup.removeLayer(h.dotMarker));
+  hzHistory=[]; hzHistoryId=1;
+  hzRenderHistList(); hzSaveHistory();
+}
+
+// ── Toolbar toggle ──
+let hzMode=false;
+function toggleHorizonMode(){
+  hzMode=!hzMode;
+  document.getElementById('hz-btn').classList.toggle('ruler-on',hzMode);
+  const panel=document.getElementById('hzPanel');
+  panel.classList.toggle('hz-open',hzMode);
+  if (hzMode){
+    hzHistLayerGroup.addTo(map);
+    setStatus('Horizon: click anywhere on the map to compute line of sight · Esc to close');
+  } else {
+    map.removeLayer(hzHistLayerGroup);
+  }
+}
+
+// ── Map click handler ──
+map.on('click',(e)=>{
+  if (!hzMode) return;
+  if (hzCurrentEntry&&e.latlng.distanceTo(hzCurrentEntry.point)<=hzCurrentEntry.maxRangeM){
+    const bearing=hzBearing(hzCurrentEntry.point,e.latlng);
+    hzSelectBearing(hzCurrentEntry,hzNearestRay(hzCurrentEntry,bearing),e.latlng);
+  } else {
+    hzCalcAt(e.latlng);
+  }
+});
+
+// ── Close/clear button ──
+document.getElementById('hz-clear-btn').addEventListener('click',()=>{
+  if (confirm('Clear the current line of sight and all history?')) hzClear();
+});
+
 </script>
 </head>
 <body>
@@ -312,6 +901,7 @@ function loadFirebaseSDK(cb) {
   <button class="tb-btn" id="dep-btn" onclick="enterPlaceDeployPoint()" title="Place deployment point">⚑</button>
   <button class="tb-btn" id="search-btn" onclick="toggleSearchBar()" title="Filter/search units">⊟</button>
   <button class="tb-btn" id="ruler-btn" title="Measure distances">⊾</button>
+  <button class="tb-btn" id="hz-btn" onclick="toggleHorizonMode()" title="Line-of-sight horizon tool">⊙</button>
   <button class="tb-btn" id="annotate-btn" title="Draw annotations">✎</button>
   <button class="tb-btn" id="elev-btn" onclick="cycleMapMode()" title="Switch map layer (Hybrid / Satellite / Elevation)">🗺 HYB</button>
   <button class="tb-btn" onclick="resetMap()" title="Reset map">↺</button>
@@ -4983,7 +5573,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BE';
+const VERSION = '2026-08-22-BF';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5970,5 +6560,16 @@ function showError(msg) {
 
 </script>
 <div id="sync-log" style="position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.7);color:#0f0;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+<div id="hzPanel">
+  <div class="hz-header">
+    <span class="hz-micro" style="margin-bottom:0;">Horizon — line of sight</span>
+    <button id="hz-clear-btn" class="tb-btn" style="font-size:11px;padding:2px 8px;">Clear</button>
+  </div>
+  <div style="font-size:10.5px;color:#8891a5;">Click anywhere on the map to compute what is visible from that point.</div>
+  <div class="hz-progress-track" id="hzProgressTrack"><div class="hz-progress-fill" id="hzProgressFill"></div></div>
+  <div class="hz-pano-wrap" id="hzPanoWrap"></div>
+  <div class="hz-profile-wrap" id="hzProfileWrap"></div>
+  <div class="hz-history-list" id="hzHistoryList"></div>
+</div>
 </body>
 </html>
