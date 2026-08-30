@@ -4533,9 +4533,12 @@ function createMarker(pt, side, count, role = '') {
   else if (role === 'artillery') { m._maxAmmo = 5; m._ammo = 3 + Math.floor(Math.random() * 3); }
   allMarkers.push(m);
   m.addTo(map);
-  // Enemy units start hidden (fog of war) — admin sees all
+  // Enemy units start hidden (fog of war) — admin sees all.
+  // Hide synchronously right after addTo so getElement() is already available.
   if (side !== userSide && !_adminAuthed) {
-    m.on('add', () => { const el = m.getElement(); if (el) el.style.display = 'none'; });
+    const _hel = m.getElement();
+    if (_hel) _hel.style.display = 'none';
+    // Belt-and-suspenders for any async pane cases
     setTimeout(() => { const el = m.getElement(); if (el) el.style.display = 'none'; }, 0);
   }
   if (side === userSide) {
@@ -4980,7 +4983,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BD';
+const VERSION = '2026-08-22-BE';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5941,6 +5944,12 @@ async function main() {
     }
     } // end spawn cache if/else
 
+    // Pre-hide all enemy markers before the loading overlay drops
+    for (const _m of allMarkers) {
+      if (_m._side !== userSide && !_adminAuthed) {
+        const _el = _m.getElement(); if (_el) _el.style.display = 'none';
+      }
+    }
     document.getElementById('loading').style.display = 'none';
     loadAnnotations();
     fetchWeather();
