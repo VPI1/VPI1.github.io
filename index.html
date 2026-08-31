@@ -5196,7 +5196,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CK';
+const VERSION = '2026-08-22-CL';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7332,18 +7332,44 @@ var _urbanPolygonLayers = [];
   };
 })();
 
-// ── Hide annotation circles in terrain mode (they overlap the urban outlines) ──
+// ── CL: terrain mode shows ONLY KML outlines — hide forts, boundary, all annotations ──
 (function() {
+  let _savedFortViz = null;
   const _prev = setMapMode;
   setMapMode = function(mode) {
     const was = mapMode;
     _prev(mode);
     if (mode === 'terrain') {
+      // Save & hide fort layers
+      if (typeof FORT_LAYERS !== 'undefined') {
+        _savedFortViz = {};
+        Object.entries(FORT_LAYERS).forEach(function(_e) {
+          var k = _e[0], l = _e[1];
+          _savedFortViz[k] = map.hasLayer(l);
+          if (map.hasLayer(l)) map.removeLayer(l);
+        });
+      }
+      // Hide boundary outline
+      if (typeof gameBoundaryLayer !== 'undefined' && map.hasLayer(gameBoundaryLayer))
+        map.removeLayer(gameBoundaryLayer);
+      // Hide ALL annotation layers
       if (typeof annotationLayers !== 'undefined')
-        annotationLayers.forEach(a => { if (a.type === 'circle') map.removeLayer(a.layer); });
+        annotationLayers.forEach(function(a) { if (map.hasLayer(a.layer)) map.removeLayer(a.layer); });
     } else if (was === 'terrain') {
+      // Restore fort layers to previous visibility
+      if (typeof FORT_LAYERS !== 'undefined' && _savedFortViz) {
+        Object.entries(FORT_LAYERS).forEach(function(_e) {
+          var k = _e[0], l = _e[1];
+          if (_savedFortViz[k] && !map.hasLayer(l)) l.addTo(map);
+        });
+        _savedFortViz = null;
+      }
+      // Restore boundary
+      if (typeof gameBoundaryLayer !== 'undefined' && !map.hasLayer(gameBoundaryLayer))
+        gameBoundaryLayer.addTo(map);
+      // Restore ALL annotation layers
       if (typeof annotationLayers !== 'undefined')
-        annotationLayers.forEach(a => { if (a.type === 'circle' && !map.hasLayer(a.layer)) a.layer.addTo(map); });
+        annotationLayers.forEach(function(a) { if (!map.hasLayer(a.layer)) a.layer.addTo(map); });
     }
   };
 })();
