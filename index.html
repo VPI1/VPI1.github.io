@@ -624,7 +624,7 @@ function setMapMode(mode) {
   } else if (prev === 'terrain') {
     map.removeLayer(terrainViewLayer);
     if (map.hasLayer(terrainMaskLayer)) map.removeLayer(terrainMaskLayer);
-    if (mode !== 'osm') map.removeLayer(osmLayer);
+    if (mode !== 'osm' && map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
   } else {
     map.removeLayer(MAP_MODE_LAYERS[prev]);
   }
@@ -634,7 +634,6 @@ function setMapMode(mode) {
     MAP_MODE_LAYERS['elevation'].addTo(map);
     map.on('moveend zoomend', _scheduleTopoRecolor); _scheduleTopoRecolor();
   } else if (mode === 'terrain') {
-    if (!map.hasLayer(osmLayer)) osmLayer.addTo(map);
     terrainViewLayer.addTo(map);
     if (terrainMaskLayer && Object.keys(terrainMaskLayer._layers ?? {}).length)
       terrainMaskLayer.addTo(map);
@@ -5197,7 +5196,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CI';
+const VERSION = '2026-08-22-CJ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
