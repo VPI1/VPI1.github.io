@@ -5196,7 +5196,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CG';
+const VERSION = '2026-08-22-CH';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7049,6 +7049,10 @@ function buildTerrainView() {
 
   for (const { ring, holes, urban } of terrainPolys) {
     if (!urban) continue;
+    // Skip the one oversized settlement-outline polygon (bbox area > 0.0005 sq-deg)
+    const lats = ring.map(p => p[0]), lngs = ring.map(p => p[1]);
+    const bbox = (Math.max(...lats) - Math.min(...lats)) * (Math.max(...lngs) - Math.min(...lngs));
+    if (bbox > 0.0005) continue;
     const rings = holes?.length ? [ring, ...holes] : ring;
     L.polygon(rings, {
       renderer: cvs, interactive: false, pane: 'terrainViewPane',
