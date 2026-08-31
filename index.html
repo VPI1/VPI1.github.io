@@ -664,7 +664,7 @@ function _strHash(s) {
 
 const OVERPASS_CACHE_TTL = 7 * 24 * 3600 * 1000; // 7 days
 // Cache key version — bump to force a fresh fetch when query changes
-const OVERPASS_CACHE_VER = 'v1';
+const OVERPASS_CACHE_VER = 'v2';
 
 // fetchAndExtract: returns extracted terrain data, caching the extracted result
 // (not raw JSON, which is 5-20 MB and blows past localStorage quota).
@@ -5196,7 +5196,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CL';
+const VERSION = '2026-08-22-CM';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
