@@ -5197,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CE';
+const VERSION = '2026-08-22-CF';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7045,50 +7045,18 @@ function buildTerrainView() {
   terrainViewLayer.clearLayers();
   if (typeof terrainMaskLayer !== 'undefined') terrainMaskLayer.clearLayers();
 
-  // Single Canvas renderer on the existing terrainViewLayer (already on the map
-  // when this runs, so polygon paths are created immediately — no pane/timing issues)
   map.getPane('terrainViewPane').style.opacity = '';
   const cvs = L.canvas({ pane: 'terrainViewPane' });
 
-  // Forest — semi-transparent so roads/context show through
-  for (const { ring, holes, urban } of terrainPolys) {
-    if (urban) continue;
-    const rings = holes?.length ? [ring, ...holes] : ring;
-    L.polygon(rings, {
-      renderer: cvs, interactive: false, pane: 'terrainViewPane',
-      color: '#1a5c2a', weight: 1, opacity: 0.75,
-      fillColor: '#2e7d3a', fillOpacity: 0.62
-    }).addTo(terrainViewLayer);
-  }
-
-  // Urban — high opacity to cover OSM tile content
   for (const { ring, holes, urban } of terrainPolys) {
     if (!urban) continue;
     const rings = holes?.length ? [ring, ...holes] : ring;
     L.polygon(rings, {
       renderer: cvs, interactive: false, pane: 'terrainViewPane',
-      stroke: false, fillColor: '#d4702a', fillOpacity: 0.95
+      stroke: false, fillColor: '#d4702a', fillOpacity: 1
     }).addTo(terrainViewLayer);
   }
 
-  // Water bodies
-  for (const { ring } of waterPolys) {
-    L.polygon(ring, {
-      renderer: cvs, interactive: false, pane: 'terrainViewPane',
-      color: '#1a5cb5', weight: 1, opacity: 0.8,
-      fillColor: '#4da6f5', fillOpacity: 0.75
-    }).addTo(terrainViewLayer);
-  }
-
-  // Rivers / streams
-  for (const { pts, major } of riverLines) {
-    L.polyline(pts, {
-      renderer: cvs, interactive: false, pane: 'terrainViewPane',
-      color: '#4da6f5', weight: major ? 2.5 : 1.5, opacity: 0.85
-    }).addTo(terrainViewLayer);
-  }
-
-  // Boundary mask (separate pane, unchanged)
   if (typeof terrainMaskLayer !== 'undefined' && _BOUNDARY_SEGS?.[0]?.length) {
     const worldBox = [[-89,-179],[89,-179],[89,179],[-89,179]];
     const svgMask = L.svg({ pane: 'terrainMaskPane' });
