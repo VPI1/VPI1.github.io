@@ -5265,7 +5265,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CU';
+const VERSION = '2026-08-22-CV';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5907,7 +5907,8 @@ async function main() {
     // When Firebase is configured it is the source of truth — always spawn fresh
     if (_hasFBConfig) {
       bestState = null;
-      try { localStorage.removeItem(SAVE_KEY); } catch {}
+      // Keep localStorage intact — saveState() writes routes there every second
+      // and loadSavedState() uses it as an immediate fallback before Firebase fires
     }
     // Discard any state that predates the last reset (shared via localStorage)
     const resetAt = parseInt(localStorage.getItem(RESET_KEY) || '0');
@@ -5928,6 +5929,9 @@ async function main() {
         deploymentPoints.splice(deploymentPoints.indexOf(dp), 1);
       }
     }
+    // In Firebase mode: restore from localStorage immediately; Firebase overrides shortly after.
+    // In non-Firebase mode: standard localStorage / GH state load path.
+    if (_hasFBConfig) loadSavedState();
     if (!_hasFBConfig && loadSavedState()) {
       // Apply pending events queued by GH Actions ticks while nobody was online
       const pending = bestState?._pendingEvents;
