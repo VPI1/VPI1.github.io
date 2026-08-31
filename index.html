@@ -804,13 +804,12 @@ function extractPolygons(data) {
 
   for (const el of data.elements) {
     if (el.type === 'way') {
-      const urban = !!(el.tags?.landuse === 'residential' || el.tags?.place);
       const wood  = el.tags?.natural === 'wood';
       const water = el.tags?.natural === 'water';
       const wway  = el.tags?.waterway;
-      if (urban || wood) {
+      if (wood) {
         const r = wayToRing(el, nodeMap);
-        if (r) polys.push({ ring: r, urban });
+        if (r) polys.push({ ring: r, urban: false });
       }
       if (water) {
         const r = wayToRing(el, nodeMap);
@@ -841,9 +840,7 @@ function extractPolygons(data) {
         if (r) wPolys.push({ ring: r });
       }
     }
-    if (el.type === 'node' && el.tags?.place) {
-      polys.push({ ring: circlePolyAround(el.lat, el.lon, 300), urban: true });
-    }
+
   }
   return { polys, wPolys, rLines, bSegs };
 }
@@ -5200,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BW2';
+const VERSION = '2026-08-22-BY';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7194,6 +7191,18 @@ map.on('click', function(e) {
   const water   = waterAt(pt);
   const fort    = _fortNearPt(lat, lng);
 
+  // Spotting factors (fraction of open-field detection rate)
+  const spotDrone  = terrainSpotFactor(pt);
+  const spotVisual = terrainVisualFactor(pt);
+  const spotDronePct  = Math.round(spotDrone  * 100);
+  const spotVisualPct = Math.round(spotVisual * 100);
+
+  function _spotColor(pct) {
+    if (pct <= 25) return '#81c784';   // green — very hidden
+    if (pct <= 50) return '#ffb74d';   // amber — partial cover
+    return '#ef5350';                  // red   — exposed
+  }
+
   const ROLES_INFO = [
     { key:'infantry', sym:'⊕', label:'Infantry' },
     { key:'mortar',   sym:'⬡', label:'Mortar' },
@@ -7203,36 +7212,152 @@ map.on('click', function(e) {
   ];
 
   const terrainIcon = { forest:'🌿', urban:'🏚', field:'◌' };
-  const waterIcon   = { water:'🌊', river:'〰', stream:'⌇', null:'—' };
-  const fortIcon    = { ditches:'⬛', teeth:'◆', wire:'⚡', null:'—' };
-  const fortLabel   = { ditches:'AT ditch', teeth:"Dragon's teeth", wire:'Barbed wire', null:'None within 25m' };
+  const waterIcon   = { water:'🌊', river:'〰', stream:'⌇' };
+  const fortLabel   = { ditches:'AT ditch', teeth:"Dragon's teeth", wire:'Barbed wire' };
 
-  let rows = '';
+  function _multLabel(m) {
+    if (m === 0) return '<span style="color:#ef5350">BLOCKED</span>';
+    if (m >= 1.0) return '<span style="color:#81c784">1× (clear)</span>';
+    return `<span style="color:#ffb74d">${(1/m).toFixed(1)}× slower</span>`;
+  }
+
+  let moveRows = '';
   for (const { key, sym, label } of ROLES_INFO) {
     const wm = waterSpeedMult(water, key);
     const om = obstacleSpeedMult(fort, key);
-    const total = Math.min(wm, om); // worst modifier wins
-    rows += `<tr><td style="padding:1px 6px 1px 0;white-space:nowrap">${sym} ${label}</td>`
-          + `<td style="padding:1px 0">${_multLabel(total)}</td></tr>`;
+    const total = Math.min(wm, om);
+    moveRows += `<tr><td style="padding:1px 6px 1px 0;white-space:nowrap">${sym} ${label}</td>`
+              + `<td>${_multLabel(total)}</td></tr>`;
   }
 
-  const html = `<div style="font:12px/1.5 'Consolas',monospace;min-width:230px;color:#e0e0e0">
+  const html = `<div style="font:12px/1.5 'Consolas',monospace;min-width:250px;color:#e0e0e0">
     <b style="font-size:13px;color:#ffffff">Terrain Analysis</b>
     <div style="color:#8899bb;font-size:10px;margin-bottom:4px">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+
     <table style="width:100%;border-top:1px solid #334;padding-top:4px;margin-top:2px;border-collapse:collapse">
-      <tr><td style="color:#8899bb;padding-right:8px">Terrain</td><td>${terrainIcon[terrain]??'◌'} ${terrain}</td></tr>
-      <tr><td style="color:#8899bb;padding-right:8px">Water</td><td>${waterIcon[water]??'—'} ${water ?? 'None'}</td></tr>
-      <tr><td style="color:#8899bb;padding-right:8px">Obstacle</td><td>${fortIcon[fort]??'—'} ${fortLabel[fort]}</td></tr>
+      <tr><td style="color:#8899bb;padding-right:8px">Terrain</td>
+          <td>${terrainIcon[terrain]??'◌'} ${terrain}</td></tr>
+      <tr><td style="color:#8899bb;padding-right:8px">Water</td>
+          <td>${waterIcon[water] ?? '— none'}</td></tr>
+      <tr><td style="color:#8899bb;padding-right:8px">Obstacle</td>
+          <td>${fort ? (fortLabel[fort]??fort)+' (within 25m)' : '— none'}</td></tr>
     </table>
+
+    <div style="margin-top:6px;border-top:1px solid #334;padding-top:4px">
+      <div style="color:#8899bb;margin-bottom:3px">Detection risk vs open field:</div>
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          <td style="padding:1px 6px 1px 0">🚁 Drone/mavic</td>
+          <td><span style="color:${_spotColor(spotDronePct)};font-weight:bold">${spotDronePct}%</span></td>
+          <td style="color:#8899bb;font-size:10px;padding-left:4px">${spotDronePct<100?'(−'+(100-spotDronePct)+'%)':''}</td>
+        </tr>
+        <tr>
+          <td style="padding:1px 6px 1px 0">👁 Visual/infantry</td>
+          <td><span style="color:${_spotColor(spotVisualPct)};font-weight:bold">${spotVisualPct}%</span></td>
+          <td style="color:#8899bb;font-size:10px;padding-left:4px">${spotVisualPct<100?'(−'+(100-spotVisualPct)+'%)':''}</td>
+        </tr>
+      </table>
+    </div>
+
     <div style="margin-top:6px;border-top:1px solid #334;padding-top:4px">
       <div style="color:#8899bb;margin-bottom:2px">Movement modifiers:</div>
-      <table style="width:100%;border-collapse:collapse">${rows}</table>
+      <table style="width:100%;border-collapse:collapse">${moveRows}</table>
     </div>
   </div>`;
 
-  L.popup({ maxWidth: 300, className: 'terrain-info-popup' })
+  L.popup({ maxWidth: 320, className: 'terrain-info-popup' })
     .setLatLng(e.latlng).setContent(html).openOn(map);
-});
+}));
+
+// ── Terrain view legend ───────────────────────────────────────────────────────
+(function() {
+  const leg = document.createElement('div');
+  leg.id = 'terrain-legend';
+  leg.style.cssText = [
+    'display:none', 'position:fixed', 'bottom:56px', 'right:10px',
+    'z-index:9100', 'background:rgba(16,20,28,0.93)', 'border:1px solid #334',
+    'border-radius:6px', 'padding:10px 13px', 'font:11px/1.6 Consolas,monospace',
+    'color:#d0d8e0', 'pointer-events:none', 'min-width:230px',
+    'box-shadow:0 2px 10px rgba(0,0,0,0.6)'
+  ].join(';');
+  leg.innerHTML = `
+    <div style="font-size:12px;font-weight:bold;color:#fff;margin-bottom:5px;letter-spacing:.04em">
+      🌿 TERRAIN VIEW
+    </div>
+    <div style="border-top:1px solid #334;padding-top:5px;margin-bottom:5px">
+      <div style="color:#8899bb;font-size:10px;margin-bottom:3px">TERRAIN TYPE</div>
+      <table style="border-collapse:collapse;width:100%">
+        <tr>
+          <td style="padding:1px 0;width:12px"><span style="display:inline-block;width:10px;height:10px;background:#2e7d3a;border:1px solid #1a5c2a;vertical-align:middle"></span></td>
+          <td style="padding:1px 6px">Forest</td>
+          <td style="color:#81c784;font-size:10px">Drone 22% · Visual 30%</td>
+        </tr>
+        <tr>
+          <td style="padding:1px 0"><span style="display:inline-block;width:10px;height:10px;background:#d4702a;border:1px solid #7a3a10;vertical-align:middle"></span></td>
+          <td style="padding:1px 6px">Urban</td>
+          <td style="color:#ffb74d;font-size:10px">Drone 45% · Visual 50%</td>
+        </tr>
+        <tr>
+          <td style="padding:1px 0"><span style="display:inline-block;width:10px;height:10px;background:#b8c4a0;border:1px solid #6a7850;vertical-align:middle"></span></td>
+          <td style="padding:1px 6px">Open field</td>
+          <td style="color:#ef5350;font-size:10px">Drone 100% · Visual 100%</td>
+        </tr>
+        <tr>
+          <td style="padding:1px 0"><span style="display:inline-block;width:10px;height:10px;background:#4da6f5;border:1px solid #1a5cb5;vertical-align:middle"></span></td>
+          <td style="padding:1px 6px">Water/river</td>
+          <td style="color:#8899bb;font-size:10px">Blocks movement</td>
+        </tr>
+      </table>
+    </div>
+    <div style="border-top:1px solid #334;padding-top:5px;margin-bottom:5px">
+      <div style="color:#8899bb;font-size:10px;margin-bottom:3px">DETECTION RISK (% vs open field)</div>
+      <table style="border-collapse:collapse;width:100%;font-size:10px">
+        <tr><th style="text-align:left;color:#8899bb;font-weight:normal;padding-right:10px"></th>
+            <th style="color:#8899bb;font-weight:normal">🚁 Drone</th>
+            <th style="color:#8899bb;font-weight:normal;padding-left:6px">👁 Visual</th></tr>
+        <tr><td style="padding:1px 10px 1px 0">🌿 Forest</td>
+            <td><span style="color:#81c784">22%</span></td>
+            <td style="padding-left:6px"><span style="color:#81c784">30%</span></td></tr>
+        <tr><td style="padding:1px 10px 1px 0">🏚 Urban</td>
+            <td><span style="color:#ffb74d">45%</span></td>
+            <td style="padding-left:6px"><span style="color:#ffb74d">50%</span></td></tr>
+        <tr><td style="padding:1px 10px 1px 0">◌ Open</td>
+            <td><span style="color:#ef5350">100%</span></td>
+            <td style="padding-left:6px"><span style="color:#ef5350">100%</span></td></tr>
+      </table>
+    </div>
+    <div style="border-top:1px solid #334;padding-top:5px">
+      <div style="color:#8899bb;font-size:10px;margin-bottom:3px">FORTIFICATIONS (movement)</div>
+      <table style="border-collapse:collapse;width:100%;font-size:10px">
+        <tr><td style="color:#ffc300;padding-right:10px">⬛ AT ditch</td>
+            <td>blocks vehicles · −82% infantry</td></tr>
+        <tr><td style="color:#00fff8;padding-right:10px">◆ Dragon's teeth</td>
+            <td>blocks vehicles · −18% infantry</td></tr>
+        <tr><td style="color:#c3c3c3;padding-right:10px">⚡ Wire</td>
+            <td>blocks vehicles · −62% infantry</td></tr>
+      </table>
+    </div>
+    <div style="border-top:1px solid #334;padding-top:4px;margin-top:4px;color:#556677;font-size:9px">
+      ⊛ Click any point for exact modifiers
+    </div>
+  `;
+  document.body.appendChild(leg);
+})();
+
+// Wrap setMapMode to toggle the legend when entering/leaving terrain mode
+(function() {
+  const _orig = setMapMode;
+  setMapMode = function(mode) {
+    _orig(mode);
+    const leg = document.getElementById('terrain-legend');
+    if (leg) leg.style.display = mode === 'terrain' ? 'block' : 'none';
+  };
+  // Show immediately if already in terrain mode
+  if (typeof mapMode !== 'undefined' && mapMode === 'terrain') {
+    const leg = document.getElementById('terrain-legend');
+    if (leg) leg.style.display = 'block';
+  }
+})();
 </script>
 <div id="sync-log" style="position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.7);color:#0f0;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
 <div id="hzPanel">
