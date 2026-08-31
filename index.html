@@ -2509,7 +2509,16 @@ function _buildStatusTab(m) {
   } else if (m._fortifying) {
     h += _statusRow('⬡', 'Digging in…', 'In progress', '#ffa726');
   } else {
-    h += _statusRow('⬡', 'Position', 'None — in open', '#ef5350');
+    const _mPt = markerPos(m);
+    const _ter = terrainAt(_mPt);
+    const _inBldg = _ter === 'urban' && typeof _URBAN_POLYS !== 'undefined' &&
+                    _URBAN_POLYS.some(r => pointInPolygon(_mPt, r));
+    const _posLabel = _inBldg         ? 'In building — natural cover' :
+                      _ter === 'urban'  ? 'Urban area — partial cover' :
+                      _ter === 'forest' ? 'In treeline — concealment' :
+                      'None — in open';
+    const _posColor = _ter === 'field' ? '#ef5350' : '#ffd54f';
+    h += _statusRow('⬡', 'Position', _posLabel, _posColor);
   }
 
   // ── Visibility ──────────────────────────────────────────────
@@ -5249,7 +5258,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CQ';
+const VERSION = '2026-08-22-CR';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
