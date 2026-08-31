@@ -4539,21 +4539,30 @@ setInterval(() => {
     }
     // ── Fog of war: enemy visibility ──
     if (m._side === userSide) {
-      // Friendly infantry spots nearby enemies; range and chance reduced by weather
-      if (m._role === 'infantry') {
+      // Ground / foot units (+ idle Mavic on the ground) spot nearby enemies.
+      // Building walls and thick treelines block LOS; summer foliage greatly reduces chance.
+      const _isGroundSpotter = m._role === 'infantry' || m._role === 'mortar' ||
+                               m._role === 'artillery' || m._role === 'fpv' ||
+                               (m._role === 'mavic' && !m._mavicMission);
+      if (_isGroundSpotter) {
+        const mPt = markerPos(m);
         const visRange = weatherData && weatherData.vis > 0 ? Math.min(weatherData.vis, 1500) : 1500; // human eye max ≈ 1500 m
         for (const e of allMarkers) {
           if (e._side === userSide) continue;
           const ePt = markerPos(e);
-          const dist = segMeters(markerPos(m), ePt);
+          const dist = segMeters(mPt, ePt);
           if (dist > visRange) continue;
           const alreadySpotted = (e._spottedUntil ?? 0) > now;
-          // Summer: soldiers inside buildings are invisible beyond 10 m (masonry blocks LOS)
-          if (dist >= 10 && _URBAN_POLYS.some(ring => pointInPolygon(ePt, ring))) continue;
+          if (dist >= 10) {
+            // Building wall on LOS — covers target inside building AND building as obstacle
+            if (_losBuildingOnPath(mPt, ePt)) continue;
+            // More than one treeline between observer and target — summer foliage too thick
+            if (_losForestCrossings(mPt, ePt) > 1) continue;
+          }
           // Summer foliage: dense canopy makes treelines very hard to see through
           const eTerrain = terrainAt(ePt);
           const tvf = eTerrain === 'forest' ? 0.12 :  // thick summer foliage
-                      eTerrain === 'urban'  ? 0.45 :  // open street/yard in urban zone
+                      eTerrain === 'urban'  ? 0.45 :  // open street / yard in urban zone
                       1.00;                            // open field
           const factor = (dist <= 50 ? 1.0 : tvf) * groundVisibilityFactor;
           if (alreadySpotted || Math.random() < factor) {
@@ -5240,7 +5249,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CP';
+const VERSION = '2026-08-22-CQ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7002,6 +7011,31 @@ function _firstCrossingInfo(route, seg) {
     if(t!==null&&(best===null||t<best.t)) best={type:'wire',t};
   }
   return best;
+}
+// Returns true if any KML building wall intersects the LOS from ptA to ptB.
+// Covers both "building between two units" and "target inside a building".
+function _losBuildingOnPath(ptA, ptB) {
+  const ax=ptA[1],ay=ptA[0],bx=ptB[1],by=ptB[0];
+  for (const ring of _URBAN_POLYS) {
+    const n=ring.length;
+    for (let i=0,j=n-1;i<n;j=i++) {
+      if (_seg2x(ax,ay,bx,by,ring[i][1],ring[i][0],ring[j][1],ring[j][0])) return true;
+    }
+  }
+  return false;
+}
+// Returns the number of distinct forest polygons the LOS from ptA to ptB crosses.
+function _losForestCrossings(ptA, ptB) {
+  const ax=ptA[1],ay=ptA[0],bx=ptB[1],by=ptB[0];
+  let count=0;
+  for (const {ring, urban} of terrainPolys) {
+    if (urban) continue;
+    const n=ring.length;
+    for (let i=0,j=n-1;i<n;j=i++) {
+      if (_seg2x(ax,ay,bx,by,ring[i][1],ring[i][0],ring[j][1],ring[j][0])) { count++; break; }
+    }
+  }
+  return count;
 }
 // Returns true when the straight-line path from→to crosses any dragon's-teeth segment.
 // Call before committing vehicle/armour movement: if(isBlockedByTeeth(from,to)) return;
