@@ -4993,6 +4993,7 @@ function fbPushMySide() {
       };
     }
     var n = Object.keys(updates).length;
+    if (!n) return; // don't wipe Firebase when allMarkers is empty (e.g. during init)
     _fbDb.ref('units_' + userSide).set(updates).then(function() {
       _syncLog('pushed ' + userSide + ': ' + n + ' units');
     }).catch(function(e) {
@@ -5036,7 +5037,6 @@ function fbApplySideSnapshot(side, all) {
   for (var uid in all) {
     var d = all[uid];
     if (!d || !d.uid) continue;
-    if (!_adminAuthed && d.clientId === _fbClientId) continue;
     if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue;
     fbApplyUnit(d);
   }
@@ -5045,6 +5045,8 @@ function fbApplySideSnapshot(side, all) {
 function fbApplyUnit(d) {
   var existing = allMarkers.find(function(m) { return m._uid === d.uid; });
   if (existing) {
+    // Skip echo (own update reflected back) — only for units already on map
+    if (!_adminAuthed && d.clientId === _fbClientId) return;
     if (d.route && d.route.length >= 2) {
       if (movingMarkers.has(existing)) {
         var old = movingMarkers.get(existing);
@@ -5263,7 +5265,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CT';
+const VERSION = '2026-08-22-CU';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
