@@ -4477,6 +4477,11 @@ setInterval(() => {
   }
   // keep range circle centred on selected unit as it moves
   updatePanelRange();
+  // Refresh status tab content live so terrain / position / suppression update as unit moves
+  if (activePanel && activePanel._panelTab === 'sts') {
+    const _stsPc = document.querySelector('#unit-panel .pc');
+    if (_stsPc) _stsPc.innerHTML = _buildStatusTab(activePanel);
+  }
 
   // ── TDP auto-spawn ──
   const now = Date.now();
@@ -5258,7 +5263,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CR';
+const VERSION = '2026-08-22-CS';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
