@@ -5197,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BZ';
+const VERSION = '2026-08-22-CA';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7044,47 +7044,54 @@ const terrainViewLayer = L.layerGroup([], { pane: 'terrainViewPane' });
 function buildTerrainView() {
   terrainViewLayer.clearLayers();
   if (typeof terrainMaskLayer !== 'undefined') terrainMaskLayer.clearLayers();
-  const svgR = L.svg({ pane: 'terrainViewPane' });
-  // Pane-level opacity makes overlapping same-type polygons non-compounding
-  map.getPane('terrainViewPane').style.opacity = '0.72';
+  if (typeof terrainUrbanLayer !== 'undefined') terrainUrbanLayer.clearLayers();
 
-  // Pass 1: forest (rendered below urban)
+  // Forest + water: SVG renderer in terrainViewPane (opacity 0.68)
+  // — SVG group compositing prevents alpha stacking on overlapping forest polys
+  map.getPane('terrainViewPane').style.opacity = '0.68';
+  const svgF = L.svg({ pane: 'terrainViewPane' });
+
   for (const { ring, holes, urban } of terrainPolys) {
     if (urban) continue;
     const rings = holes?.length ? [ring, ...holes] : ring;
     L.polygon(rings, {
-      renderer: svgR, interactive: false, pane: 'terrainViewPane',
+      renderer: svgF, interactive: false, pane: 'terrainViewPane',
       color: '#1a5c2a', weight: 1, opacity: 1,
       fillColor: '#2e7d3a', fillOpacity: 1
     }).addTo(terrainViewLayer);
   }
-  // Pass 2: urban (rendered on top → urban wins on overlap)
-  for (const { ring, holes, urban } of terrainPolys) {
-    if (!urban) continue;
-    const rings = holes?.length ? [ring, ...holes] : ring;
-    L.polygon(rings, {
-      renderer: svgR, interactive: false, pane: 'terrainViewPane',
-      color: '#7a3a10', weight: 1, opacity: 1,
-      fillColor: '#d4702a', fillOpacity: 1
-    }).addTo(terrainViewLayer);
-  }
-  // Water bodies
   for (const { ring } of waterPolys) {
     L.polygon(ring, {
-      renderer: svgR, interactive: false, pane: 'terrainViewPane',
+      renderer: svgF, interactive: false, pane: 'terrainViewPane',
       color: '#1a5cb5', weight: 1, opacity: 1,
       fillColor: '#4da6f5', fillOpacity: 1
     }).addTo(terrainViewLayer);
   }
-  // Rivers/streams ({ pts, major })
   for (const { pts, major } of riverLines) {
     L.polyline(pts, {
-      renderer: svgR, interactive: false, pane: 'terrainViewPane',
+      renderer: svgF, interactive: false, pane: 'terrainViewPane',
       color: '#4da6f5', weight: major ? 2.5 : 1.5, opacity: 1
     }).addTo(terrainViewLayer);
   }
 
-  // Boundary mask — everything outside game area gets a grey overlay
+  // Urban: separate pane at 0.96 opacity — covers OSM tile details cleanly
+  if (typeof terrainUrbanLayer !== 'undefined') {
+    const svgU = L.svg({ pane: 'terrainUrbanPane' });
+    for (const { ring, holes, urban } of terrainPolys) {
+      if (!urban) continue;
+      const rings = holes?.length ? [ring, ...holes] : ring;
+      L.polygon(rings, {
+        renderer: svgU, interactive: false, pane: 'terrainUrbanPane',
+        color: '#7a3a10', weight: 1.5, opacity: 1,
+        fillColor: '#d4702a', fillOpacity: 1
+      }).addTo(terrainUrbanLayer);
+    }
+    if (mapMode === 'terrain' && !map.hasLayer(terrainUrbanLayer)
+        && Object.keys(terrainUrbanLayer._layers ?? {}).length)
+      terrainUrbanLayer.addTo(map);
+  }
+
+  // Boundary mask — covers everything outside game area
   if (typeof terrainMaskLayer !== 'undefined' && _BOUNDARY_SEGS?.[0]?.length) {
     const worldBox = [[-89,-179],[89,-179],[89,179],[-89,179]];
     const svgMask = L.svg({ pane: 'terrainMaskPane' });
@@ -7319,6 +7326,27 @@ map.on('click', function(e) {
     const leg = document.getElementById('terrain-legend');
     if (leg) leg.style.display = 'block';
   }
+})();
+
+// ── Urban terrain pane (separate from forest — higher opacity covers OSM tiles) ─
+map.createPane('terrainUrbanPane');
+map.getPane('terrainUrbanPane').style.zIndex = '352'; // between forest(350) and mask(362)
+map.getPane('terrainUrbanPane').style.opacity = '0.96';
+map.getPane('terrainUrbanPane').style.pointerEvents = 'none';
+var terrainUrbanLayer = L.layerGroup([], { pane: 'terrainUrbanPane' });
+
+// Extend the setMapMode wrapper chain to add/remove terrainUrbanLayer with terrain mode
+(function() {
+  const _prev = setMapMode;
+  setMapMode = function(mode) {
+    _prev(mode);
+    if (mode === 'terrain') {
+      if (Object.keys(terrainUrbanLayer._layers ?? {}).length && !map.hasLayer(terrainUrbanLayer))
+        terrainUrbanLayer.addTo(map);
+    } else {
+      if (map.hasLayer(terrainUrbanLayer)) map.removeLayer(terrainUrbanLayer);
+    }
+  };
 })();
 </script>
 <div id="sync-log" style="position:fixed;bottom:8px;left:8px;z-index:9999;background:rgba(0,0,0,0.7);color:#0f0;font:11px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
