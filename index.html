@@ -1444,7 +1444,7 @@ function showFortPositionInfo(id) {
 
 function checkOccupyFortPosition(unit) {
   const pos = unit.getLatLng();
-  const OCCUPY_M = 80; // metres
+  const OCCUPY_M = 5; // metres
   for (let i = fortPositions.length - 1; i >= 0; i--) {
     const fp = fortPositions[i];
     const dLat = (pos.lat - fp.lat) * 111320;
@@ -4335,7 +4335,7 @@ map.on('dblclick', (e) => {
   if (patrolMode) { L.DomEvent.stop(e); confirmPatrol(); return; }
   if (!drawMode) return;
   if (drawPoints.length > 1) drawPoints.pop();
-  if (drawPoints.length >= 2) assignRoute(activeMarker, [...drawPoints]);
+  if (drawPoints.length >= 2) { assignRoute(activeMarker, [...drawPoints]); saveState(); }
   cancelDraw();
   closePanel();
 });
@@ -4386,7 +4386,7 @@ document.addEventListener('keydown', (e) => {
     if (searchAreaMode && searchAreaPoints.length >= 3) { finishSearchArea(); return; }
     if (drawMode && drawPoints.length >= 2) {
       clearTimeout(clickTimer); clickTimer = null;
-      assignRoute(activeMarker, [...drawPoints]);
+      assignRoute(activeMarker, [...drawPoints]); saveState();
       cancelDraw(); closePanel();
     }
   }
@@ -5263,7 +5263,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CS';
+const VERSION = '2026-08-22-CT';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
