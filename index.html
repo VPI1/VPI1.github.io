@@ -5197,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CB';
+const VERSION = '2026-08-22-CC';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7044,10 +7044,14 @@ const terrainViewLayer = L.layerGroup([], { pane: 'terrainViewPane' });
 function buildTerrainView() {
   terrainViewLayer.clearLayers();
   if (typeof terrainMaskLayer !== 'undefined') terrainMaskLayer.clearLayers();
-  if (typeof terrainUrbanLayer !== 'undefined') terrainUrbanLayer.clearLayers();
 
-  // Forest + water: SVG renderer in terrainViewPane (opacity 0.68)
-  // — SVG group compositing prevents alpha stacking on overlapping forest polys
+  // Remove any previously added urban polygons
+  if (typeof _urbanPolygonLayers !== 'undefined') {
+    _urbanPolygonLayers.forEach(l => { try { map.removeLayer(l); } catch(e){} });
+    _urbanPolygonLayers.length = 0;
+  }
+
+  // Forest + water in terrainViewPane at 68% opacity
   map.getPane('terrainViewPane').style.opacity = '0.68';
   const svgF = L.svg({ pane: 'terrainViewPane' });
 
@@ -7074,24 +7078,23 @@ function buildTerrainView() {
     }).addTo(terrainViewLayer);
   }
 
-  // Urban: separate pane at 0.96 opacity — covers OSM tile details cleanly
-  if (typeof terrainUrbanLayer !== 'undefined') {
+  // Urban: add directly to map (not via layerGroup) so the SVG renderer fires
+  // onAdd immediately and paths are created in terrainUrbanPane (z=352, opacity=1)
+  if (mapMode === 'terrain' && typeof _urbanPolygonLayers !== 'undefined') {
     const svgU = L.svg({ pane: 'terrainUrbanPane' });
     for (const { ring, holes, urban } of terrainPolys) {
       if (!urban) continue;
       const rings = holes?.length ? [ring, ...holes] : ring;
-      L.polygon(rings, {
+      const poly = L.polygon(rings, {
         renderer: svgU, interactive: false, pane: 'terrainUrbanPane',
-        stroke: false,
-        fillColor: '#d4702a', fillOpacity: 1
-      }).addTo(terrainUrbanLayer);
+        stroke: false, fillColor: '#d4702a', fillOpacity: 1
+      });
+      poly.addTo(map);
+      _urbanPolygonLayers.push(poly);
     }
-    if (mapMode === 'terrain' && !map.hasLayer(terrainUrbanLayer)
-        && Object.keys(terrainUrbanLayer._layers ?? {}).length)
-      terrainUrbanLayer.addTo(map);
   }
 
-  // Boundary mask — covers everything outside game area
+  // Boundary mask
   if (typeof terrainMaskLayer !== 'undefined' && _BOUNDARY_SEGS?.[0]?.length) {
     const worldBox = [[-89,-179],[89,-179],[89,179],[-89,179]];
     const svgMask = L.svg({ pane: 'terrainMaskPane' });
@@ -7346,6 +7349,23 @@ var terrainUrbanLayer = L.layerGroup([], { pane: 'terrainUrbanPane' });
     } else {
       if (map.hasLayer(terrainUrbanLayer)) map.removeLayer(terrainUrbanLayer);
     }
+  };
+})();
+
+// ── Urban polygon direct-to-map tracking array ────────────────────────────────
+// Urban polys are added directly to the map (not via layerGroup) so the SVG
+// renderer fires onAdd immediately. This array lets us remove them on mode switch.
+var _urbanPolygonLayers = [];
+
+// Extend setMapMode to clean up urban polygons when leaving terrain mode
+(function() {
+  const _prev = setMapMode;
+  setMapMode = function(mode) {
+    if (mode !== 'terrain' && typeof _urbanPolygonLayers !== 'undefined') {
+      _urbanPolygonLayers.forEach(l => { try { map.removeLayer(l); } catch(e){} });
+      _urbanPolygonLayers.length = 0;
+    }
+    _prev(mode);
   };
 })();
 </script>
