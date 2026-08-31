@@ -4541,13 +4541,21 @@ setInterval(() => {
     if (m._side === userSide) {
       // Friendly infantry spots nearby enemies; range and chance reduced by weather
       if (m._role === 'infantry') {
-        const visRange = weatherData && weatherData.vis > 0 ? Math.min(weatherData.vis, 1500) : 1500; // human eye max ≈ 1500 m, bounded by actual meteorological visibility
+        const visRange = weatherData && weatherData.vis > 0 ? Math.min(weatherData.vis, 1500) : 1500; // human eye max ≈ 1500 m
         for (const e of allMarkers) {
           if (e._side === userSide) continue;
-          const dist = segMeters(markerPos(m), markerPos(e));
+          const ePt = markerPos(e);
+          const dist = segMeters(markerPos(m), ePt);
           if (dist > visRange) continue;
           const alreadySpotted = (e._spottedUntil ?? 0) > now;
-          const factor = (dist <= 50 ? 1.0 : terrainVisualFactor(markerPos(e))) * groundVisibilityFactor;
+          // Summer: soldiers inside buildings are invisible beyond 10 m (masonry blocks LOS)
+          if (dist >= 10 && _URBAN_POLYS.some(ring => pointInPolygon(ePt, ring))) continue;
+          // Summer foliage: dense canopy makes treelines very hard to see through
+          const eTerrain = terrainAt(ePt);
+          const tvf = eTerrain === 'forest' ? 0.12 :  // thick summer foliage
+                      eTerrain === 'urban'  ? 0.45 :  // open street/yard in urban zone
+                      1.00;                            // open field
+          const factor = (dist <= 50 ? 1.0 : tvf) * groundVisibilityFactor;
           if (alreadySpotted || Math.random() < factor) {
             e._spottedUntil = now + 3000;
           }
@@ -5232,7 +5240,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CO';
+const VERSION = '2026-08-22-CP';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
