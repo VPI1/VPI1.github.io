@@ -622,7 +622,6 @@ function setMapMode(mode) {
     if (mode !== 'hybrid') map.removeLayer(hybridLayer);
     map.off('moveend zoomend', _scheduleTopoRecolor); clearTimeout(topoRecolorTimer);
   } else if (prev === 'terrain') {
-    map.removeLayer(terrainViewLayer);
     if (map.hasLayer(terrainMaskLayer)) map.removeLayer(terrainMaskLayer);
     if (mode !== 'osm' && map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
   } else {
@@ -634,7 +633,7 @@ function setMapMode(mode) {
     MAP_MODE_LAYERS['elevation'].addTo(map);
     map.on('moveend zoomend', _scheduleTopoRecolor); _scheduleTopoRecolor();
   } else if (mode === 'terrain') {
-    terrainViewLayer.addTo(map);
+    if (!map.hasLayer(terrainViewLayer)) terrainViewLayer.addTo(map);
     if (terrainMaskLayer && Object.keys(terrainMaskLayer._layers ?? {}).length)
       terrainMaskLayer.addTo(map);
   } else {
@@ -4409,15 +4408,52 @@ setInterval(() => {
     const wt = waterAt(curPt);
     const wMult = waterSpeedMult(wt, marker._role);
     if (wMult === 0) { clearRoute(marker); showToast('Unit blocked — impassable water obstacle!', '#ef5350'); continue; }
-    const _ot = _curSegObstacle(route, state.seg); const oMult = obstacleSpeedMult(_ot, marker._role);
-    if (oMult === 0) { clearRoute(marker); showToast(_fortBlockMsg(_ot, marker._role), '#ef5350'); continue; }
-    let budget = (suppressed ? WALK_MS * 0.4 : WALK_MS) * wMult * oMult;
+    // Pre-check: block immediately if current segment has a zero-mult obstacle
+    { const _ot0 = _curSegObstacle(route, state.seg);
+      const _om0 = obstacleSpeedMult(_ot0, marker._role);
+      if (_om0 === 0) { clearRoute(marker); showToast(_fortBlockMsg(_ot0, marker._role), '#ef5350'); continue; } }
+    // Obstacle slowdown is applied only within a ±30 m zone around each crossing point.
+    const _OBST_HZ = 30;
+    let budget = (suppressed ? WALK_MS * 0.4 : WALK_MS) * wMult;
+    let _obBlocked = false;
     while (budget > 0 && state.seg < route.length - 1) {
-      const d = segMeters(route[state.seg], route[state.seg+1]);
-      const left = d * (1 - state.t);
-      if (budget >= left) { budget -= left; state.seg++; state.t = 0; }
-      else                { state.t += budget / d; budget = 0; }
+      const _a = route[state.seg], _b = route[state.seg + 1];
+      const d = segMeters(_a, _b);
+      const cross = d > 0 ? _firstCrossingInfo(route, state.seg) : null;
+      if (!cross) {
+        const left = d * (1 - state.t);
+        if (budget >= left) { budget -= left; state.seg++; state.t = 0; }
+        else                { state.t += budget / d; budget = 0; }
+      } else {
+        const om = obstacleSpeedMult(cross.type, marker._role);
+        if (om === 0) {
+          clearRoute(marker); showToast(_fortBlockMsg(cross.type, marker._role), '#ef5350');
+          _obBlocked = true; break;
+        }
+        const halfT = Math.min(_OBST_HZ / d, cross.t, 1 - cross.t);
+        const tLow  = Math.max(0, cross.t - halfT);
+        const tHigh = Math.min(1, cross.t + halfT);
+        const ct    = state.t;
+        if (ct < tLow) {
+          // Before crossing zone — full speed
+          const left = (tLow - ct) * d;
+          if (budget >= left) { budget -= left; state.t = tLow; }
+          else { state.t += budget / d; budget = 0; }
+        } else if (ct < tHigh) {
+          // Inside crossing zone — obstacle speed
+          const left = (tHigh - ct) * d;
+          const cost = left / om;
+          if (budget >= cost) { budget -= cost; state.t = tHigh; }
+          else { state.t += (budget * om) / d; budget = 0; }
+        } else {
+          // Past crossing zone — full speed to end of segment
+          const left = (1 - ct) * d;
+          if (budget >= left) { budget -= left; state.seg++; state.t = 0; }
+          else { state.t += budget / d; budget = 0; }
+        }
+      }
     }
+    if (_obBlocked) continue;
     if (state.seg >= route.length - 1) {
       marker.setLatLng(route[route.length-1]);
       unitLog(marker, 'Arrived at destination');
@@ -4505,7 +4541,7 @@ setInterval(() => {
     if (m._side === userSide) {
       // Friendly infantry spots nearby enemies; range and chance reduced by weather
       if (m._role === 'infantry') {
-        const visRange = 300 * groundVisibilityFactor; // fog shrinks visual range
+        const visRange = weatherData && weatherData.vis > 0 ? Math.min(weatherData.vis, 1500) : 1500; // human eye max ≈ 1500 m, bounded by actual meteorological visibility
         for (const e of allMarkers) {
           if (e._side === userSide) continue;
           const dist = segMeters(markerPos(m), markerPos(e));
@@ -5196,7 +5232,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CN';
+const VERSION = '2026-08-22-CO';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6931,6 +6967,34 @@ function _seg2x(ax,ay,bx,by,cx,cy,dx,dy) {
   const u=((cx-ax)*(by-ay)-(cy-ay)*(bx-ax))/d;
   return t>0&&t<1&&u>0&&u<1;
 }
+// Returns t-value on AB at crossing with CD, or null if no intersection.
+function _seg2xT(ax,ay,bx,by,cx,cy,dx,dy) {
+  const d=(bx-ax)*(dy-cy)-(by-ay)*(dx-cx);
+  if(Math.abs(d)<1e-10) return null;
+  const t=((cx-ax)*(dy-cy)-(cy-ay)*(dx-cx))/d;
+  const u=((cx-ax)*(by-ay)-(cy-ay)*(bx-ax))/d;
+  return (t>0&&t<1&&u>0&&u<1) ? t : null;
+}
+// Returns the first (smallest t) obstacle crossing on route segment seg, or null.
+function _firstCrossingInfo(route, seg) {
+  const a=route[seg], b=route[seg+1];
+  if(!a||!b) return null;
+  const ax=a[1],ay=a[0],bx=b[1],by=b[0];
+  let best=null;
+  for(const s of _DITCH_SEGS) for(let i=0;i<s.length-1;i++){
+    const t=_seg2xT(ax,ay,bx,by,s[i][1],s[i][0],s[i+1][1],s[i+1][0]);
+    if(t!==null&&(best===null||t<best.t)) best={type:'ditches',t};
+  }
+  for(const s of _TEETH_SEGS) for(let i=0;i<s.length-1;i++){
+    const t=_seg2xT(ax,ay,bx,by,s[i][1],s[i][0],s[i+1][1],s[i+1][0]);
+    if(t!==null&&(best===null||t<best.t)) best={type:'teeth',t};
+  }
+  for(const s of _WIRE_SEGS) for(let i=0;i<s.length-1;i++){
+    const t=_seg2xT(ax,ay,bx,by,s[i][1],s[i][0],s[i+1][1],s[i+1][0]);
+    if(t!==null&&(best===null||t<best.t)) best={type:'wire',t};
+  }
+  return best;
+}
 // Returns true when the straight-line path from→to crosses any dragon's-teeth segment.
 // Call before committing vehicle/armour movement: if(isBlockedByTeeth(from,to)) return;
 function isBlockedByTeeth(fromLL, toLL) {
@@ -7089,6 +7153,9 @@ function buildTerrainView() {
     }).addTo(terrainViewLayer);
   }
 
+  // Ensure overlay layer is always on map so overlays show in all modes
+  if (!map.hasLayer(terrainViewLayer)) terrainViewLayer.addTo(map);
+
   if (typeof terrainMaskLayer !== 'undefined' && _BOUNDARY_SEGS?.[0]?.length) {
     const worldBox = [[-89,-179],[89,-179],[89,179],[-89,179]];
     const svgMask = L.svg({ pane: 'terrainMaskPane' });
@@ -7241,7 +7308,7 @@ map.on('click', function(e) {
   leg.id = 'terrain-legend';
   leg.style.cssText = [
     'display:none', 'position:fixed', 'bottom:56px', 'right:10px',
-    'z-index:9100', 'background:rgba(16,20,28,0.93)', 'border:1px solid #334',
+    'z-index:1500', 'background:rgba(16,20,28,0.93)', 'border:1px solid #334',
     'border-radius:6px', 'padding:10px 13px', 'font:11px/1.6 Consolas,monospace',
     'color:#d0d8e0', 'pointer-events:none', 'min-width:230px',
     'box-shadow:0 2px 10px rgba(0,0,0,0.6)'
