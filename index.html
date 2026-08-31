@@ -5197,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CA';
+const VERSION = '2026-08-22-CB';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7082,7 +7082,7 @@ function buildTerrainView() {
       const rings = holes?.length ? [ring, ...holes] : ring;
       L.polygon(rings, {
         renderer: svgU, interactive: false, pane: 'terrainUrbanPane',
-        color: '#7a3a10', weight: 1.5, opacity: 1,
+        stroke: false,
         fillColor: '#d4702a', fillOpacity: 1
       }).addTo(terrainUrbanLayer);
     }
@@ -7331,7 +7331,7 @@ map.on('click', function(e) {
 // ── Urban terrain pane (separate from forest — higher opacity covers OSM tiles) ─
 map.createPane('terrainUrbanPane');
 map.getPane('terrainUrbanPane').style.zIndex = '352'; // between forest(350) and mask(362)
-map.getPane('terrainUrbanPane').style.opacity = '0.96';
+map.getPane('terrainUrbanPane').style.opacity = '1';
 map.getPane('terrainUrbanPane').style.pointerEvents = 'none';
 var terrainUrbanLayer = L.layerGroup([], { pane: 'terrainUrbanPane' });
 
