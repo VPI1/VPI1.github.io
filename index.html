@@ -5197,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-BY';
+const VERSION = '2026-08-22-BY2';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7267,7 +7267,7 @@ map.on('click', function(e) {
 
   L.popup({ maxWidth: 320, className: 'terrain-info-popup' })
     .setLatLng(e.latlng).setContent(html).openOn(map);
-}));
+});
 
 // ── Terrain view legend ───────────────────────────────────────────────────────
 (function() {
