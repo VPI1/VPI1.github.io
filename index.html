@@ -5196,7 +5196,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CJ';
+const VERSION = '2026-08-22-CK';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7049,6 +7049,8 @@ function buildTerrainView() {
 
   for (const { ring, holes, urban } of terrainPolys) {
     if (!urban) continue;
+    const lats = ring.map(p => p[0]), lngs = ring.map(p => p[1]);
+    if ((Math.max(...lats)-Math.min(...lats))*(Math.max(...lngs)-Math.min(...lngs)) > 0.0005) continue;
     const rings = holes?.length ? [ring, ...holes] : ring;
     L.polygon(rings, {
       renderer: svgU, interactive: false, pane: 'terrainViewPane',
@@ -7327,6 +7329,22 @@ var _urbanPolygonLayers = [];
       _urbanPolygonLayers.length = 0;
     }
     _prev(mode);
+  };
+})();
+
+// ── Hide annotation circles in terrain mode (they overlap the urban outlines) ──
+(function() {
+  const _prev = setMapMode;
+  setMapMode = function(mode) {
+    const was = mapMode;
+    _prev(mode);
+    if (mode === 'terrain') {
+      if (typeof annotationLayers !== 'undefined')
+        annotationLayers.forEach(a => { if (a.type === 'circle') map.removeLayer(a.layer); });
+    } else if (was === 'terrain') {
+      if (typeof annotationLayers !== 'undefined')
+        annotationLayers.forEach(a => { if (a.type === 'circle' && !map.hasLayer(a.layer)) a.layer.addTo(map); });
+    }
   };
 })();
 </script>
