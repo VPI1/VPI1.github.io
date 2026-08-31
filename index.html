@@ -5090,6 +5090,16 @@ function fbApplyUnit(d) {
       var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine2Op}).addTo(map);
       movingMarkers.set(m2, {marker:m2, route:d.route, seg:0, t:0, line:rLine2, vertices:[], splits:[]});
       m2.dragging.disable();
+    } else {
+      try {
+        var _ssRoute = JSON.parse(sessionStorage.getItem('_rt_' + d.uid));
+        if (_ssRoute && _ssRoute.length >= 2) {
+          var _rLine3Op = (m2._side !== userSide && !_adminAuthed && !(m2._spottedUntil > Date.now())) ? 0 : 0.95;
+          var rLine3 = L.polyline(_ssRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine3Op}).addTo(map);
+          movingMarkers.set(m2, {marker:m2, route:_ssRoute, seg:0, t:0, line:rLine3, vertices:[], splits:[]});
+          m2.dragging.disable();
+        }
+      } catch(e) {}
     }
   }
 }
@@ -5265,7 +5275,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CV';
+const VERSION = '2026-08-22-CW';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5533,6 +5543,7 @@ function saveState() {
     if (movingMarkers.has(m)) {
       const st = movingMarkers.get(m);
       u.remainingRoute = [[ll.lat, ll.lng], ...st.route.slice(st.seg + 1)];
+      if (m._uid) try { sessionStorage.setItem('_rt_' + m._uid, JSON.stringify(u.remainingRoute)); } catch(e) {}
     }
     units.push(u);
   }
@@ -5907,8 +5918,7 @@ async function main() {
     // When Firebase is configured it is the source of truth — always spawn fresh
     if (_hasFBConfig) {
       bestState = null;
-      // Keep localStorage intact — saveState() writes routes there every second
-      // and loadSavedState() uses it as an immediate fallback before Firebase fires
+      try { localStorage.removeItem(SAVE_KEY); } catch {}
     }
     // Discard any state that predates the last reset (shared via localStorage)
     const resetAt = parseInt(localStorage.getItem(RESET_KEY) || '0');
@@ -5929,9 +5939,6 @@ async function main() {
         deploymentPoints.splice(deploymentPoints.indexOf(dp), 1);
       }
     }
-    // In Firebase mode: restore from localStorage immediately; Firebase overrides shortly after.
-    // In non-Firebase mode: standard localStorage / GH state load path.
-    if (_hasFBConfig) loadSavedState();
     if (!_hasFBConfig && loadSavedState()) {
       // Apply pending events queued by GH Actions ticks while nobody was online
       const pending = bestState?._pendingEvents;
