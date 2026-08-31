@@ -5196,7 +5196,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CM';
+const VERSION = '2026-08-22-CN';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7045,15 +7045,46 @@ function buildTerrainView() {
   if (typeof terrainMaskLayer !== 'undefined') terrainMaskLayer.clearLayers();
 
   map.getPane('terrainViewPane').style.opacity = '';
-  const svgU = L.svg({ pane: 'terrainViewPane' });
+  const svg = L.svg({ pane: 'terrainViewPane' });
 
+  // Forest polygons — dark green fill
+  for (const { ring, holes, urban } of terrainPolys) {
+    if (urban) continue;
+    const rings = holes?.length ? [ring, ...holes] : ring;
+    L.polygon(rings, {
+      renderer: svg, interactive: false, pane: 'terrainViewPane',
+      stroke: false, fill: true, fillColor: '#3d5c2e', fillOpacity: 0.6
+    }).addTo(terrainViewLayer);
+  }
+
+  // Water bodies — blue fill
+  if (typeof waterPolys !== 'undefined') {
+    for (const { ring } of waterPolys) {
+      L.polygon(ring, {
+        renderer: svg, interactive: false, pane: 'terrainViewPane',
+        stroke: false, fill: true, fillColor: '#4a87a8', fillOpacity: 0.55
+      }).addTo(terrainViewLayer);
+    }
+  }
+
+  // Rivers / streams — blue polylines
+  if (typeof riverLines !== 'undefined') {
+    for (const { pts, major } of riverLines) {
+      L.polyline(pts, {
+        renderer: svg, interactive: false, pane: 'terrainViewPane',
+        color: '#4a87a8', weight: major ? 3 : 1.5, opacity: 0.75
+      }).addTo(terrainViewLayer);
+    }
+  }
+
+  // KML urban building outlines — orange, no fill
   for (const { ring, holes, urban } of terrainPolys) {
     if (!urban) continue;
     const lats = ring.map(p => p[0]), lngs = ring.map(p => p[1]);
     if ((Math.max(...lats)-Math.min(...lats))*(Math.max(...lngs)-Math.min(...lngs)) > 0.0005) continue;
     const rings = holes?.length ? [ring, ...holes] : ring;
     L.polygon(rings, {
-      renderer: svgU, interactive: false, pane: 'terrainViewPane',
+      renderer: svg, interactive: false, pane: 'terrainViewPane',
       color: '#d4702a', weight: 2, opacity: 1, fill: false
     }).addTo(terrainViewLayer);
   }
