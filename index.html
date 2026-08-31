@@ -5197,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CC';
+const VERSION = '2026-08-22-CD';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7045,13 +7045,6 @@ function buildTerrainView() {
   terrainViewLayer.clearLayers();
   if (typeof terrainMaskLayer !== 'undefined') terrainMaskLayer.clearLayers();
 
-  // Remove any previously added urban polygons
-  if (typeof _urbanPolygonLayers !== 'undefined') {
-    _urbanPolygonLayers.forEach(l => { try { map.removeLayer(l); } catch(e){} });
-    _urbanPolygonLayers.length = 0;
-  }
-
-  // Forest + water in terrainViewPane at 68% opacity
   map.getPane('terrainViewPane').style.opacity = '0.68';
   const svgF = L.svg({ pane: 'terrainViewPane' });
 
@@ -7078,23 +7071,6 @@ function buildTerrainView() {
     }).addTo(terrainViewLayer);
   }
 
-  // Urban: add directly to map (not via layerGroup) so the SVG renderer fires
-  // onAdd immediately and paths are created in terrainUrbanPane (z=352, opacity=1)
-  if (mapMode === 'terrain' && typeof _urbanPolygonLayers !== 'undefined') {
-    const svgU = L.svg({ pane: 'terrainUrbanPane' });
-    for (const { ring, holes, urban } of terrainPolys) {
-      if (!urban) continue;
-      const rings = holes?.length ? [ring, ...holes] : ring;
-      const poly = L.polygon(rings, {
-        renderer: svgU, interactive: false, pane: 'terrainUrbanPane',
-        stroke: false, fillColor: '#d4702a', fillOpacity: 1
-      });
-      poly.addTo(map);
-      _urbanPolygonLayers.push(poly);
-    }
-  }
-
-  // Boundary mask
   if (typeof terrainMaskLayer !== 'undefined' && _BOUNDARY_SEGS?.[0]?.length) {
     const worldBox = [[-89,-179],[89,-179],[89,179],[-89,179]];
     const svgMask = L.svg({ pane: 'terrainMaskPane' });
