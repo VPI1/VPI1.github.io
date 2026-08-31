@@ -624,7 +624,7 @@ function setMapMode(mode) {
   } else if (prev === 'terrain') {
     map.removeLayer(terrainViewLayer);
     if (map.hasLayer(terrainMaskLayer)) map.removeLayer(terrainMaskLayer);
-    if (mode !== 'osm' && map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
+    if (mode !== 'osm') map.removeLayer(osmLayer);
   } else {
     map.removeLayer(MAP_MODE_LAYERS[prev]);
   }
@@ -634,6 +634,7 @@ function setMapMode(mode) {
     MAP_MODE_LAYERS['elevation'].addTo(map);
     map.on('moveend zoomend', _scheduleTopoRecolor); _scheduleTopoRecolor();
   } else if (mode === 'terrain') {
+    if (!map.hasLayer(osmLayer)) osmLayer.addTo(map);
     terrainViewLayer.addTo(map);
     if (terrainMaskLayer && Object.keys(terrainMaskLayer._layers ?? {}).length)
       terrainMaskLayer.addTo(map);
@@ -5196,7 +5197,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CH';
+const VERSION = '2026-08-22-CI';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7045,18 +7046,14 @@ function buildTerrainView() {
   if (typeof terrainMaskLayer !== 'undefined') terrainMaskLayer.clearLayers();
 
   map.getPane('terrainViewPane').style.opacity = '';
-  const cvs = L.canvas({ pane: 'terrainViewPane' });
+  const svgU = L.svg({ pane: 'terrainViewPane' });
 
   for (const { ring, holes, urban } of terrainPolys) {
     if (!urban) continue;
-    // Skip the one oversized settlement-outline polygon (bbox area > 0.0005 sq-deg)
-    const lats = ring.map(p => p[0]), lngs = ring.map(p => p[1]);
-    const bbox = (Math.max(...lats) - Math.min(...lats)) * (Math.max(...lngs) - Math.min(...lngs));
-    if (bbox > 0.0005) continue;
     const rings = holes?.length ? [ring, ...holes] : ring;
     L.polygon(rings, {
-      renderer: cvs, interactive: false, pane: 'terrainViewPane',
-      stroke: false, fillColor: '#d4702a', fillOpacity: 1
+      renderer: svgU, interactive: false, pane: 'terrainViewPane',
+      color: '#d4702a', weight: 2, opacity: 1, fill: false
     }).addTo(terrainViewLayer);
   }
 
