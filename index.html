@@ -2101,6 +2101,7 @@ function clearPanelRange() {
   if (panelHorizonCircle)  { map.removeLayer(panelHorizonCircle);  panelHorizonCircle = null; }
   panelAntennaCircles.forEach(c => { try { map.removeLayer(c); } catch(e) {} });
   panelAntennaCircles = [];
+  if (!combatMode) clearFPVHorizon();
 }
 
 // Primary (effective) range shown as inner filled circle
@@ -2616,6 +2617,8 @@ function renderPanel() {
     <div class="pc">${content}</div>`;
   panel.style.display = 'flex';
   showPanelRange(m);
+  if ((m._role === 'fpv' || m._role === 'mavic') && !combatMode &&
+      m._fpvReadyAt === 0 && (m._fpvCooldownUntil ?? 0) <= now) showFPVHorizon(m);
 }
 
 window._tab = function(name) { if (activePanel) { activePanel._panelTab = name; renderPanel(); } };
@@ -3488,15 +3491,16 @@ function _deliverStrikeResult(entry) {
     if (allMarkers.includes(marker)) unitLog(marker, text);
   }
   if (entry.side === userSide && entry.toast) showToast(entry.toast, '#ffa726');
+  if (entry.onConfirm) entry.onConfirm();
   if (activePanel && allMarkers.includes(activePanel)) renderPanel();
 }
 
 // Queue result if no recon available; deliver immediately otherwise
-function confirmOrQueue(side, lat, lng, logs, toast) {
+function confirmOrQueue(side, lat, lng, logs, toast, onConfirm) {
   if (canConfirmStrike(side, lat, lng)) {
-    _deliverStrikeResult({ side, lat, lng, logs, toast });
+    _deliverStrikeResult({ side, lat, lng, logs, toast, onConfirm });
   } else {
-    pendingStrikeConfirms.push({ side, lat, lng, logs, toast, expiresAt: Date.now() + 120000 });
+    pendingStrikeConfirms.push({ side, lat, lng, logs, toast, onConfirm, expiresAt: Date.now() + 120000 });
     if (side === userSide) showToast('Strike fired — send Mavic or infantry near impact for damage assessment', '#888');
   }
 }
@@ -3587,7 +3591,7 @@ function enterFPVStrike(pilot) {
 // Step 2: called automatically after prep completes → enter target selection
 function enterFPVTargetMode(pilot) {
   exitCombatMode();
-  const rangeKm = FPV_RADIO_HORIZON_M / 1000;
+  const rangeKm = droneSignalRangeM(pilot) / 1000;
   enterCombatMode('fpv-strike', pilot, rangeKm, '#ef5350');
   showFPVHorizon(pilot);
   const now = Date.now();
@@ -3601,13 +3605,18 @@ function enterFPVTargetMode(pilot) {
 
 // Step 3: target selected → drone flies in real time
 function executeFPVStrike(pilot, target) {
+  const fromPos = markerPos(pilot);
+  const toPos   = markerPos(target);
+  const distM = segMeters(fromPos, toPos);
+  const _maxM = droneSignalRangeM(pilot);
+  if (distM > _maxM) {
+    showToast(`Outside radio horizon — target ${fmtDist(distM)}, max ${fmtDist(_maxM)}`, '#ef5350');
+    return;
+  }
   exitCombatMode();
   pilot._drones = Math.max(0, pilot._drones - 1);
   pilot._fpvCooldownUntil = Date.now() + 45000 / TIME_SCALE;
-  const fromPos = markerPos(pilot);
-  const toPos   = markerPos(target);
   const bearing = bearingDeg(fromPos, toPos);
-  const distM = segMeters(fromPos, toPos);
   const etaSec = Math.round(distM / (55 * TIME_SCALE));
   const droneMarker = L.marker(pilot.getLatLng(), { icon: fpvDroneIcon(bearing), zIndexOffset: 300 })
     .addTo(map).bindTooltip(`ETA ${fmtETA(etaSec)}`, { permanent: true, className: 'fpv-eta-tip', direction: 'right', offset: [8,0] });
@@ -3655,13 +3664,15 @@ function applyFPVImpact(pilot, target, intercepted) {
   const cas = 1 + Math.floor(Math.random() * 3);
   const extra = Math.random() < 0.2 ? 1 : 0;
   const total = cas + extra;
-  const destroyed = damageUnit(target, total);
-  // Damage result visible only if recon is covering the area
-  unitLog(target, `Hit by FPV drone — −${total} casualties${destroyed?' · DESTROYED':''}`);
-  const pilotRef = pilot; const rText = `FPV direct hit on ${ROLES[target._role]?.label ?? 'unit'} — −${total} casualties${destroyed?' · DESTROYED':''}`;
+  // Damage deferred until BDA — icon stays unchanged until recon confirms
+  const pilotRef = pilot; const _tgt = target;
   confirmOrQueue(pilot._side, impactPos[0], impactPos[1],
-    [{ marker: pilotRef, text: rText }],
-    `FPV confirmed: ${rText}`);
+    [{ marker: pilotRef, text: `BDA: −${total} on ${ROLES[_tgt._role]?.label ?? 'unit'}` }],
+    `BDA confirmed — FPV hit −${total}`,
+    () => { if (!allMarkers.includes(_tgt)) return;
+      const destroyed = damageUnit(_tgt, total);
+      unitLog(_tgt, `FPV assessed — −${total}${destroyed?' · DESTROYED':''}`); });
+  unitLog(pilot, `FPV direct hit — BDA pending`);
   if (allMarkers.includes(pilot)) renderPanel();
 }
 
@@ -4744,7 +4755,7 @@ let fpvHorizonCircle = null;
 function showFPVHorizon(m) {
   clearFPVHorizon();
   fpvHorizonCircle = L.circle(m.getLatLng(), {
-    radius: FPV_RADIO_HORIZON_M, color: '#ef5350', fill: true,
+    radius: droneSignalRangeM(m), color: '#ef5350', fill: true,
     fillColor: '#ef5350', fillOpacity: 0.04, weight: 1.5, opacity: 0.5, dashArray: '6 5'
   }).addTo(map);
 }
@@ -5275,7 +5286,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CW';
+const VERSION = '2026-08-22-CX';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
