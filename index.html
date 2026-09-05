@@ -4903,6 +4903,7 @@ const _fbClientId = (() => {
   return id;
 })();
 let _fbDb = null;
+let _fbSnapshotReady = false; // becomes true once our side's snapshot has arrived
 
 function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || FB_DEFAULT_CFG; } catch { return FB_DEFAULT_CFG; } }
 function setFBConfig(c) { localStorage.setItem(FB_KEY, JSON.stringify(c)); }
@@ -4982,6 +4983,7 @@ function initFirebase() {
           var remote = Object.values(all).filter(function(d) { return d && d.clientId !== _fbClientId; }).length;
           _syncLog('rcv ' + side + ': ' + n + ' total, ' + remote + ' remote');
           fbApplySideSnapshot(side, all);
+          if (side === userSide) _fbSnapshotReady = true;
         });
       });
 
@@ -5012,11 +5014,9 @@ function initFirebase() {
           lat: d.fromLat, lng: d.fromLng, dstLat: d.toLat, dstLng: d.toLng, remote: true });
       });
 
-      // Push own units immediately — set() is atomic and overwrites stale data
-      fbPushMySide();
-
-      // Heartbeat every 2s
-      setInterval(function() { fbPushMySide(); }, 2000);
+      // Heartbeat every 2s — first push is deferred until the initial Firebase
+      // snapshot has been received (so we push the saved state, not fresh spawns)
+      setInterval(function() { if (_fbSnapshotReady) fbPushMySide(); }, 2000);
 
       showToast('Multiplayer connected', '#66bb6a');
     } catch(e) {
@@ -5331,7 +5331,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CZ';
+const VERSION = '2026-08-22-CDA';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5626,8 +5626,8 @@ function loadSavedState() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return false;
     const { units, depPoints, savedAt } = JSON.parse(raw);
-    if (!units || !units.length) return false;
-    for (let _i = 0; _i < units.length; _i++) { const u = units[_i];
+    if ((!units || !units.length) && (!depPoints || !depPoints.length)) return false;
+    for (let _i = 0; _i < (units?.length ?? 0); _i++) { const u = units[_i];
       if (!u.count || u.count <= 0) continue; // skip dead/corrupted units
       const m = createMarker([u.lat, u.lng], u.side, u.count, u.role);
       // Deterministic fallback: both tabs load same localStorage in same order → same UID
