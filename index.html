@@ -4904,6 +4904,7 @@ const _fbClientId = (() => {
 })();
 let _fbDb = null;
 let _fbSnapshotReady = false; // becomes true once our side's snapshot has arrived
+const _fbInitSnapshotDone = {}; // tracks per-side first-snapshot orphan cleanup
 
 function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || FB_DEFAULT_CFG; } catch { return FB_DEFAULT_CFG; } }
 function setFBConfig(c) { localStorage.setItem(FB_KEY, JSON.stringify(c)); }
@@ -4982,6 +4983,13 @@ function initFirebase() {
           var n = Object.keys(all).length;
           var remote = Object.values(all).filter(function(d) { return d && d.clientId !== _fbClientId; }).length;
           _syncLog('rcv ' + side + ': ' + n + ' total, ' + remote + ' remote');
+          if (!_fbInitSnapshotDone[side] && n > 0) {
+            _fbInitSnapshotDone[side] = true;
+            var _fbUidSet = new Set(Object.keys(all));
+            for (var _om of [...allMarkers]) {
+              if (_om._side === side && _om._uid && !_fbUidSet.has(_om._uid)) removeUnit(_om);
+            }
+          }
           fbApplySideSnapshot(side, all);
           if (side === userSide) _fbSnapshotReady = true;
         });
@@ -5331,7 +5339,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CDA';
+const VERSION = '2026-08-22-CDB';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
