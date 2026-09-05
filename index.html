@@ -2058,12 +2058,12 @@ function damageUnit(marker, casualties) {
     // Sync ammo pool from surviving soldiers
     marker._ammo   = aliveSoldiers(marker).reduce((s, sol) => s + sol.ammo, 0);
     marker._maxAmmo = marker._soldiers.reduce((s, sol) => s + (SOLDIER_ROLES[sol.role] ?? SOLDIER_ROLES['rifleman']).ammo, 0);
-    if (marker._count === 0) { removeUnit(marker); return true; }
+    if (marker._count === 0) { fbSyncUnit(marker); removeUnit(marker); return true; }
     marker.setIcon(soldierIcon(marker._side, marker._count, marker._role));
     return false;
   }
   marker._count = Math.max(0, marker._count - casualties);
-  if (marker._count === 0) { removeUnit(marker); return true; }
+  if (marker._count === 0) { fbSyncUnit(marker); removeUnit(marker); return true; }
   marker.setIcon(soldierIcon(marker._side, marker._count, marker._role));
   return false;
 }
@@ -2300,16 +2300,27 @@ function _buildActTab(m, now, moving) {
     const fMax = fl >= FORT_MAX;
     if (m._fortifying) {
       const nextSec = Math.round((FORT_GAME_S[fl+1] - (Date.now()-m._fortStartAt)*TIME_SCALE/1000));
-      const nxt = FORT_LABELS[fl+1] ?? '';
-      h += `<div class="pb-note" style="color:#ffd54f">Digging in → ${nxt} in ~${Math.max(0,nextSec)}s game time</div>`;
+      const _uFtOn = terrainAt(markerPos(m)) === 'urban';
+      const nxt = _uFtOn ? (URBAN_FORT_LABELS[fl+1] ?? '') : (FORT_LABELS[fl+1] ?? '');
+      h += `<div class="pb-note" style="color:#ffd54f">${_uFtOn?'Fortifying building':'Digging in'} → ${nxt} in ~${Math.max(0,nextSec)}s game time</div>`;
       h += _pb('Stop Digging', '■', 'on', "_pa('fort-stop')");
     } else {
       const cSA = Math.round((FORT_COVER.smallArms[fl]??0)*100);
       const cArt = Math.round((FORT_COVER.artillery[fl]??0)*100);
       const cFPV = Math.round((FORT_COVER.fpv[fl]??0)*100);
       const coverStr = fl > 0 ? ` · SA ${cSA}% / Art ${cArt}% / FPV ${cFPV}%` : '';
-      h += `<div class="pb-note">Level ${fl}/${FORT_MAX} · ${fn}${coverStr}</div>`;
-      h += _pb(fMax ? 'Max Fortification' : `Dig In → ${FORT_LABELS[fl+1]??''}`, '⬡', fMax?'':'tac', "_pa('fort-start')", fMax);
+      const _uFt = terrainAt(markerPos(m)) === 'urban';
+      const _uFortLbl = _uFt ? (URBAN_FORT_LABELS[fl] || 'None') : fn;
+      h += `<div class="pb-note">Level ${fl}/${FORT_MAX} · ${_uFortLbl}${coverStr}</div>`;
+      if (_uFt) {
+        h += _pb(fMax ? 'Max Fortification' : `Fortify building → ${URBAN_FORT_LABELS[fl+1]??''}`, '⬡', fMax?'':'tac', "_pa('fort-start')", fMax);
+        const _wb = m._wallBreached, _wbt = m._wallBreachingAt;
+        if (_wb) h += `<div class="pb-note" style="color:#81c784">Wall breach active — free movement</div>`;
+        else if (_wbt > 0) h += _pb(`Breaching wall — ${Math.max(0,Math.round((_wbt-Date.now())/1000))}s`, '◌', '', '', true);
+        else h += _pb('Breach wall for movement', '⊞', 'tac', "_pa('fort-breach')");
+      } else {
+        h += _pb(fMax ? 'Max Fortification' : `Dig In → ${FORT_LABELS[fl+1]??''}`, '⬡', fMax?'':'tac', "_pa('fort-start')", fMax);
+      }
     }
   }
 
@@ -2717,6 +2728,7 @@ window._pa = function(action) {
   }
   else if (action === 'fort-start')   { startFortify(m); }
   else if (action === 'fort-stop')    { stopFortify(m); }
+  else if (action === 'fort-breach')  { startWallBreach(m); }
   else if (action === 'set-fallback')  { cancelDraw(); enterSetFallback(m); }
   else if (action === 'clear-fallback'){ if (m._conds) { m._conds.fallbackPos = null; } renderPanel(); }
   else if (action === 'fpv-strike')  { cancelDraw(); enterFPVStrike(m); }
@@ -3613,6 +3625,10 @@ function executeFPVStrike(pilot, target) {
     showToast(`Outside radio horizon — target ${fmtDist(distM)}, max ${fmtDist(_maxM)}`, '#ef5350');
     return;
   }
+  if (!hzCheckLoS(fromPos, toPos)) {
+    showToast('Line of sight blocked by terrain — use Horizon calculator to verify', '#ef5350');
+    return;
+  }
   exitCombatMode();
   pilot._drones = Math.max(0, pilot._drones - 1);
   pilot._fpvCooldownUntil = Date.now() + 45000 / TIME_SCALE;
@@ -3670,6 +3686,11 @@ function applyFPVImpact(pilot, target, intercepted) {
     [{ marker: pilotRef, text: `BDA: −${total} on ${ROLES[_tgt._role]?.label ?? 'unit'}` }],
     `BDA confirmed — FPV hit −${total}`,
     () => { if (!allMarkers.includes(_tgt)) return;
+      const _tgtCurPos = markerPos(_tgt);
+      if (segMeters(_tgtCurPos, [impactPos[0], impactPos[1]]) > 150) {
+        if (pilotRef._side === userSide) showToast('FPV missed — target had vacated the impact zone', '#888');
+        return;
+      }
       const destroyed = damageUnit(_tgt, total);
       unitLog(_tgt, `FPV assessed — −${total}${destroyed?' · DESTROYED':''}`); });
   unitLog(pilot, `FPV direct hit — BDA pending`);
@@ -4113,7 +4134,7 @@ function rebuildLine(state) {
   const pts = [[ll.lat, ll.lng], ...state.route.slice(state.seg + 1)];
   if (state.line) { state.line.setLatLngs(pts); }
   else {
-    const _rlOp = (state.marker._side !== userSide && !_adminAuthed && !(state.marker._spottedUntil > Date.now())) ? 0 : 0.95;
+    const _rlOp = (state.marker._side !== userSide && !_adminAuthed) ? 0 : 0.95;
     state.line = L.polyline(pts, { color: '#ff9500', weight: 3, dashArray: '10 6', opacity: _rlOp }).addTo(map);
   }
 }
@@ -4669,6 +4690,7 @@ setInterval(() => {
 
 // ── fortification system ────────────────────────────────────
 const FORT_LABELS = ['', 'Scraped', 'Position', 'Trench', 'Reinforced', 'Bunker', 'Hardened'];
+const URBAN_FORT_LABELS = ['', 'Sandbag entry', 'Barricade', 'Door loophole', 'Window embrasure', 'Reinforced pos.', 'Hardened'];
 // Per-threat protection fractions [lvl 0 … 6]
 // smallArms: levels 1-2 give big firefight protection; higher levels plateau
 // artillery/fpv: levels 1-2 provide very little; levels 3-6 scale up significantly
@@ -4691,10 +4713,21 @@ function processFortifications(now) {
     const next = FORT_LABELS.findIndex((_, i) => i > m._fortLevel && gameElapsed >= FORT_GAME_S[i]);
     if (next > m._fortLevel) {
       m._fortLevel = next;
-      unitLog(m, `Fortification upgraded to ${FORT_LABELS[m._fortLevel]}`);
-      showToast(`Unit fortified: ${FORT_LABELS[m._fortLevel]}`, '#ffd54f');
+      const _pfUrban = terrainAt(markerPos(m)) === 'urban';
+      const _pfLbl = _pfUrban ? (URBAN_FORT_LABELS[m._fortLevel] || FORT_LABELS[m._fortLevel]) : FORT_LABELS[m._fortLevel];
+      unitLog(m, `Fortification upgraded to ${_pfLbl}`);
+      showToast(`Unit fortified: ${_pfLbl}`, '#ffd54f');
       updateFortBadge(m);
       if (m._fortLevel >= FORT_MAX) { m._fortifying = false; showToast('Max fortification reached!', '#66bb6a'); }
+      if (activePanel === m) renderPanel();
+    }
+  }
+  for (const m of allMarkers) {
+    if (m._role !== 'infantry' || !m._wallBreachingAt || m._wallBreached) continue;
+    if (Date.now() >= m._wallBreachingAt) {
+      m._wallBreached = true; m._wallBreachingAt = 0;
+      unitLog(m, 'Wall breached — movement through building enabled');
+      if (m._side === userSide) showToast('Wall breached!', '#81c784');
       if (activePanel === m) renderPanel();
     }
   }
@@ -4738,13 +4771,24 @@ function startFortify(m, workerIds) {
   m._fortifying = true; m._fortStartAt = Date.now() - (m._fortLevel > 0 ? FORT_GAME_S[m._fortLevel] * 1000 / TIME_SCALE : 0);
   const etaSec = Math.round(FORT_GAME_S[m._fortLevel+1] / m._fortWorkerFrac);
   const workerNote = workerIds ? ` (${workers}/${total} soldiers)` : '';
-  showToast(`Digging in${workerNote} — ${FORT_LABELS[m._fortLevel+1]} in ~${etaSec}s game time`, '#ffd54f');
-  unitLog(m, `Started digging in${workerNote}`);
+  const _sfUrban = terrainAt(markerPos(m)) === 'urban';
+  const _sfLbl = _sfUrban ? (URBAN_FORT_LABELS[m._fortLevel+1] || FORT_LABELS[m._fortLevel+1]) : FORT_LABELS[m._fortLevel+1];
+  showToast(`${_sfUrban?'Fortifying building':'Digging in'}${workerNote} — ${_sfLbl} in ~${etaSec}s game time`, '#ffd54f');
+  unitLog(m, `${_sfUrban?'Fortifying building':'Started digging in'}${workerNote}`);
   renderPanel();
 }
 function stopFortify(m) {
   m._fortifying = false;
   showToast('Stopped digging.', '#ffd54f');
+  renderPanel();
+}
+function startWallBreach(m) {
+  if (m._wallBreached) { showToast('Wall already breached.', '#ffd54f'); return; }
+  if (m._wallBreachingAt > 0) { showToast('Wall breach already in progress.', '#ffd54f'); return; }
+  const durMs = 120000 / TIME_SCALE;
+  m._wallBreachingAt = Date.now() + durMs;
+  showToast(`Breaching wall — done in ~${Math.round(durMs/1000)}s real time`, '#ffd54f');
+  unitLog(m, 'Wall breach started');
   renderPanel();
 }
 
@@ -4810,6 +4854,7 @@ function createMarker(pt, side, count, role = '') {
   m._conds = {};
   m._patrolRoute = null; m._fallbackMarker = null;
   m._fortLevel = 0; m._fortifying = false; m._fortStartAt = 0; m._fortDamage = 0;
+  m._wallBreached = false; m._wallBreachingAt = 0;
   m._supply = null; // active supply convoy: { type, arrivesAt, convoyMarker }
   // Mavic-specific
   m._mavicBattery = 100; m._mavicCooldownUntil = 0; m._mavicMission = null;
@@ -5067,7 +5112,7 @@ function fbApplyUnit(d) {
         movingMarkers.delete(existing);
       }
       existing.setLatLng(d.route[0]);
-      var _rLineOp = (existing._side !== userSide && !_adminAuthed && !(existing._spottedUntil > Date.now())) ? 0 : 0.95;
+      var _rLineOp = (existing._side !== userSide && !_adminAuthed) ? 0 : 0.95;
       var rLine = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLineOp}).addTo(map);
       movingMarkers.set(existing, {marker:existing, route:d.route, seg:0, t:0, line:rLine, vertices:[], splits:[]});
       existing.dragging.disable();
@@ -5097,7 +5142,7 @@ function fbApplyUnit(d) {
     if (d.ammo != null) m2._ammo = d.ammo;
     if (d.hp != null) m2._hp = d.hp;
     if (d.route && d.route.length >= 2) {
-      var _rLine2Op = (m2._side !== userSide && !_adminAuthed && !(m2._spottedUntil > Date.now())) ? 0 : 0.95;
+      var _rLine2Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
       var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine2Op}).addTo(map);
       movingMarkers.set(m2, {marker:m2, route:d.route, seg:0, t:0, line:rLine2, vertices:[], splits:[]});
       m2.dragging.disable();
@@ -5105,7 +5150,7 @@ function fbApplyUnit(d) {
       try {
         var _ssRoute = JSON.parse(sessionStorage.getItem('_rt_' + d.uid));
         if (_ssRoute && _ssRoute.length >= 2) {
-          var _rLine3Op = (m2._side !== userSide && !_adminAuthed && !(m2._spottedUntil > Date.now())) ? 0 : 0.95;
+          var _rLine3Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
           var rLine3 = L.polyline(_ssRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine3Op}).addTo(map);
           movingMarkers.set(m2, {marker:m2, route:_ssRoute, seg:0, t:0, line:rLine3, vertices:[], splits:[]});
           m2.dragging.disable();
@@ -5286,7 +5331,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CX';
+const VERSION = '2026-08-22-CY';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6811,6 +6856,17 @@ function hzClear(){
   hzHistory.forEach(h=>hzHistLayerGroup.removeLayer(h.dotMarker));
   hzHistory=[]; hzHistoryId=1;
   hzRenderHistList(); hzSaveHistory();
+  if (hzMode) toggleHorizonMode();
+}
+function hzCheckLoS(fromPos, toPos) {
+  if (!hzCurrentEntry || !hzCurrentEntry.frontier) return true;
+  const ep = [hzCurrentEntry.point.lat, hzCurrentEntry.point.lng];
+  if (segMeters(ep, fromPos) > 250) return true; // calc not from pilot position
+  const bear = bearingDeg(fromPos, toPos);
+  const bidx = Math.round(bear / (360 / hzCurrentEntry.numBearings)) % hzCurrentEntry.numBearings;
+  const fpt = hzCurrentEntry.frontier[bidx];
+  if (!fpt) return true;
+  return segMeters(fromPos, toPos) <= segMeters(ep, [fpt.lat, fpt.lng]) + 300;
 }
 
 // ── Toolbar toggle ──
