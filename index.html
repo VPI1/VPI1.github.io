@@ -5331,7 +5331,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CY';
+const VERSION = '2026-08-22-CZ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5546,6 +5546,11 @@ function resetMap() {
 }
 
 function saveState() {
+  if (!saveState._autoInit) {
+    saveState._autoInit = true;
+    window.addEventListener('beforeunload', saveState);
+    setInterval(saveState, 30000);
+  }
   if (!allMarkers.length) return;
   const units = [];
   for (const m of allMarkers) {
@@ -5734,7 +5739,7 @@ function loadSavedState() {
           redrawDepRoute(created);
         }
         if (dp.nextReinfAt > 0) created._nextReinfAt = dp.nextReinfAt;
-        if (dp.nextSpawnAt > 0) created._nextSpawnAt = dp.nextSpawnAt;
+        if (dp.nextSpawnAt > 0) created._nextSpawnAt = Math.max(dp.nextSpawnAt, Date.now() + 120000);
       }
     }
     // Fast-forward time that passed while the page was closed
@@ -5974,6 +5979,18 @@ async function main() {
     // When Firebase is configured it is the source of truth — always spawn fresh
     if (_hasFBConfig) {
       bestState = null;
+      if (lsRaw?.depPoints?.length && (lsRaw.savedAt ?? 0) >= GLOBAL_RESET_TS) {
+        const _minSpawn = Date.now() + 120000;
+        for (const dp of lsRaw.depPoints) {
+          if (dp.role === 'all') continue;
+          try {
+            const created = createDeploymentPoint({ lat: dp.lat, lng: dp.lng }, dp.side, dp.role ?? 'infantry');
+            if (dp.moveRoute?.length) { created.moveRoute = dp.moveRoute; redrawDepRoute(created); }
+            if (dp.nextSpawnAt > 0) created._nextSpawnAt = Math.max(dp.nextSpawnAt, _minSpawn);
+            if (dp.nextReinfAt > 0) created._nextReinfAt = Math.max(dp.nextReinfAt, Date.now() + 60000);
+          } catch(e) {}
+        }
+      }
       try { localStorage.removeItem(SAVE_KEY); } catch {}
     }
     // Discard any state that predates the last reset (shared via localStorage)
