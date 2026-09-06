@@ -980,24 +980,43 @@ function randomComposition(count) {
 }
 function aliveSoldiers(m) { return (m._soldiers || []).filter(s => s.alive); }
 // Fort-level visibility penalty for infantry dug into positions.
-// Units always retain at least a 60m floor — they're not completely blind.
+// Soldiers in deep positions (trench / bunker) see only what's directly over the parapet.
 // A scanning friendly Mavic within 400m restores full range.
-const FORT_VIS_FACTOR = [1.0, 0.88, 0.58, 0.38, 0.26, 0.20, 0.16];
-const FORT_VIS_MIN_M  = 60; // absolute floor — even in a hardened bunker you see immediate surroundings
+// Urban values are handled separately in unitRangeM — building walls dominate.
+const FORT_VIS_FACTOR = [1.0, 0.80, 0.45, 0.13, 0.10, 0.08, 0.07];
+//                       L0   L1    L2    L3    L4    L5    L6
+// At 400m base: none=400, scrape=320, pos=180, trench=52, reinf=40, bunker=32, hard=28
+// Urban sight range (per fortification level) — walls restrict view regardless of fort level:
+const URBAN_VIS_M = [70, 60, 55, 45, 35, 30, 25];
 
 function unitRangeM(m) {
   const base = 400;
   if (m._role !== 'infantry' && m._role !== 'mortar') return base;
   const fl = m._fortLevel ?? 0;
-  if (fl === 0) return base;
   const pos = markerPos(m);
+  const terrain = terrainAt(pos);
   const hasMavicCover = allMarkers.some(mk => {
     if (mk._side !== m._side || mk._role !== 'mavic') return false;
     const mis = mk._mavicMission;
     return mis?.phase === 'scanning' && segMeters([mis.dstLat, mis.dstLng], pos) < 400;
   });
   if (hasMavicCover) return base;
-  return Math.max(FORT_VIS_MIN_M, Math.round(base * (FORT_VIS_FACTOR[fl] ?? 0.16)));
+  // Urban (building): walls dominate over fortification level.
+  // Even unfortified, a unit inside a building can only see through windows/doors.
+  if (terrain === 'urban') {
+    return Math.max(25, URBAN_VIS_M[fl] ?? 25);
+  }
+  // Open field or forest at no fortification: full situational awareness.
+  // Forest provides slight concealment from range and has visual obstructions but
+  // soldiers still have good awareness — they can hear, see gaps, etc.
+  if (fl === 0) return terrain === 'forest' ? 350 : base;
+  // Dug-in positions: dramatically restrict what the soldier can see.
+  // Level 1-2 (scrape/position): head is near ground level, some awareness.
+  // Level 3+ (trench/bunker): head is below ground, sight is through periscope or
+  // carefully raising above the parapet — severely limited.
+  const _visMin = fl >= 3 ? 30 : 50;
+  const _fieldBase = terrain === 'forest' ? 350 : base;
+  return Math.max(_visMin, Math.round(_fieldBase * (FORT_VIS_FACTOR[fl] ?? 0.07)));
 }
 
 // Combined detection hide % for a unit at its current position (fort + terrain)
@@ -2428,10 +2447,13 @@ function _buildActTab(m, now, moving) {
     const fl = m._fortLevel; const fn = FORT_LABELS[fl] || 'None';
     const fMax = fl >= FORT_MAX;
     if (m._fortifying) {
-      const nextSec = Math.round((FORT_GAME_S[fl+1] - (Date.now()-m._fortStartAt)*TIME_SCALE/1000));
+      const _rawEl = (Date.now()-m._fortStartAt)*TIME_SCALE/1000;
+      const _gameEl = _rawEl * (m._fortWorkerFrac??1);
+      const _remSec = Math.round(Math.max(0, FORT_GAME_S[fl+1] - _gameEl) / (m._fortWorkerFrac??1));
+      const _prgPan = Math.min(99, Math.round(_gameEl*100/(FORT_GAME_S[fl+1]||1)));
       const _uFtOn = terrainAt(markerPos(m)) === 'urban';
       const nxt = _uFtOn ? (URBAN_FORT_LABELS[fl+1] ?? '') : (FORT_LABELS[fl+1] ?? '');
-      h += `<div class="pb-note" style="color:#ffd54f">${_uFtOn?'Fortifying building':'Digging in'} → ${nxt} in ~${Math.max(0,nextSec)}s game time</div>`;
+      h += `<div class="pb-note" style="color:#ffd54f">${_uFtOn?'Fortifying building':'Digging in'} → ${nxt} in ~${_remSec}s (${_prgPan}% done)</div>`;
       h += _pb('Stop Digging', '■', 'on', "_pa('fort-stop')");
     } else {
       const cSA = Math.round((FORT_COVER.smallArms[fl]??0)*100);
@@ -2714,7 +2736,9 @@ function _buildStatusTab(m) {
   const baseRange = 400;
   const curRange = unitRangeM(m);
   if (m._role === 'infantry' || m._role === 'mortar') {
-    if (fl >= 2) {
+    const _visTerrain = terrainAt(markerPos(m));
+    const _visRestricted = fl >= 2 || _visTerrain === 'urban';
+    if (_visRestricted) {
       const pos = markerPos(m);
       const hasMavic = allMarkers.some(mk => {
         if (mk._side !== m._side || mk._role !== 'mavic') return false;
@@ -2724,11 +2748,19 @@ function _buildStatusTab(m) {
       if (hasMavic) {
         h += _statusRow('📡', 'Sight range', `${baseRange}m (Mavic cover)`, '#81c784');
       } else {
-        h += _statusRow('👁', 'Sight range', `${curRange}m / ${baseRange}m`, '#ef5350');
-        h += _statusRow('📡', 'Mavic cover', 'None — blind in position!', '#ff7043');
+        const _visNote = _visTerrain === 'urban'
+          ? 'building walls restrict view'
+          : fl >= 3 ? 'deep position — extremely restricted'
+          : 'dug-in — limited situational awareness';
+        const _visCol = curRange < 60 ? '#ef5350' : curRange < 100 ? '#ffa726' : '#ffd54f';
+        h += _statusRow('👁', 'Sight range', `${curRange}m · ${_visNote}`, _visCol);
+        if (_visTerrain !== 'urban') {
+          h += _statusRow('📡', 'ISR support', 'No Mavic — consider ISR coverage', '#ff7043');
+        }
       }
     } else {
-      h += _statusRow('👁', 'Sight range', `${curRange}m`, '#c0c8d8');
+      const _openNote = _visTerrain === 'forest' ? '350m (treeline — good awareness)' : `${curRange}m (open)`;
+      h += _statusRow('👁', 'Sight range', _openNote, '#81c784');
     }
   } else if (m._role === 'mavic') {
     const mis = m._mavicMission;
@@ -5153,6 +5185,7 @@ function processFortifications(now) {
     const next = FORT_LABELS.findIndex((_, i) => i > m._fortLevel && gameElapsed >= FORT_GAME_S[i]);
     if (next > m._fortLevel) {
       m._fortLevel = next;
+      m._fortRawPrgS = null; // level completed — reset partial progress save for next tier
       const _pfUrban = terrainAt(markerPos(m)) === 'urban';
       const _pfLbl = _pfUrban ? (URBAN_FORT_LABELS[m._fortLevel] || FORT_LABELS[m._fortLevel]) : FORT_LABELS[m._fortLevel];
       unitLog(m, `Fortification upgraded to ${_pfLbl}`);
@@ -5212,12 +5245,24 @@ function startFortify(m, workerIds) {
   const total = aliveSoldiers(m).length || 1;
   const workers = workerIds ? workerIds.size : total;
   m._fortWorkerFrac = Math.max(0.05, workers / total);
-  m._fortifying = true; m._fortStartAt = Date.now() - (m._fortLevel > 0 ? FORT_GAME_S[m._fortLevel] * 1000 / TIME_SCALE : 0);
-  const etaSec = Math.round(FORT_GAME_S[m._fortLevel+1] / m._fortWorkerFrac);
+  m._fortifying = true;
+  // Restore saved raw progress (from a previous stopFortify), or start from current level base
+  const _rawPrgS = m._fortRawPrgS != null
+    ? m._fortRawPrgS
+    : (m._fortLevel > 0 ? FORT_GAME_S[m._fortLevel] : 0);
+  m._fortStartAt = Date.now() - _rawPrgS * 1000 / TIME_SCALE;
+  m._fortRawPrgS = null; // consumed
+  // Correct ETA: remaining game-seconds / workerFrac → real seconds
+  const _gameElapsed = _rawPrgS * m._fortWorkerFrac;
+  const _remainGameS = Math.max(0, FORT_GAME_S[m._fortLevel+1] - _gameElapsed);
+  const etaSec = Math.round(_remainGameS / m._fortWorkerFrac);
+  const _prgPct = _rawPrgS > 0 && m._fortLevel === 0
+    ? Math.min(99, Math.round(_gameElapsed * 100 / FORT_GAME_S[m._fortLevel+1])) : 0;
+  const _prgNote = _prgPct > 3 ? ` · resuming from ${_prgPct}%` : '';
   const workerNote = workerIds ? ` (${workers}/${total} soldiers)` : '';
   const _sfUrban = terrainAt(markerPos(m)) === 'urban';
   const _sfLbl = _sfUrban ? (URBAN_FORT_LABELS[m._fortLevel+1] || FORT_LABELS[m._fortLevel+1]) : FORT_LABELS[m._fortLevel+1];
-  showToast(`${_sfUrban?'Fortifying building':'Digging in'}${workerNote} — ${_sfLbl} in ~${etaSec}s game time`, '#ffd54f');
+  showToast(`${_sfUrban?'Fortifying building':'Digging in'}${workerNote}${_prgNote} — ${_sfLbl} in ~${etaSec}s`, '#ffd54f');
   unitLog(m, `${_sfUrban?'Fortifying building':'Started digging in'}${workerNote}`);
   // Auto-breach wall when fortifying a building — breach is part of the process
   if (_sfUrban && !m._wallBreached && m._wallBreachingAt === 0) {
@@ -5227,8 +5272,19 @@ function startFortify(m, workerIds) {
   renderPanel();
 }
 function stopFortify(m) {
+  if (m._fortifying && m._fortStartAt) {
+    // Save raw elapsed progress so it can be restored on next dig session.
+    // Raw game-seconds = elapsed_ms * TIME_SCALE / 1000 (workerFrac NOT baked in)
+    m._fortRawPrgS = (Date.now() - m._fortStartAt) * TIME_SCALE / 1000;
+    const _wf = m._fortWorkerFrac ?? 1.0;
+    const _gameElapsed = m._fortRawPrgS * _wf;
+    const _nextThresh = FORT_GAME_S[(m._fortLevel ?? 0) + 1] ?? 1;
+    const _prgPct = Math.min(99, Math.round(_gameElapsed * 100 / _nextThresh));
+    showToast(`Stopped digging — ${_prgPct}% progress toward next level saved`, '#ffd54f');
+  } else {
+    showToast('Stopped digging.', '#ffd54f');
+  }
   m._fortifying = false;
-  showToast('Stopped digging.', '#ffd54f');
   renderPanel();
 }
 function startWallBreach(m) {
@@ -5794,7 +5850,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CDG';
+const VERSION = '2026-08-22-CDH';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
