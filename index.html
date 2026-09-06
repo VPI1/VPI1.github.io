@@ -5987,7 +5987,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDM';
+const VERSION = '2026-09-06-CDN';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6752,21 +6752,20 @@ async function main() {
     }
 
     // Spawn cache — keyed by SPAWN_KEY+GLOBAL_RESET_TS; auto-invalidated on game reset
-    // Idempotent: runs after allMarkers is populated; adds missing vehicles per side
+    // Idempotent: runs after allMarkers is populated; adds missing vehicles per side.
+    // Anchors placement on an existing unit for that side — no boundary/frontline
+    // checks needed since the anchor is already proven to be in valid territory.
     function ensureVehicles() {
-      const [_elat, _elng] = CENTER;
       for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
+        const _anchor = allMarkers.find(m => m._side === side);
+        if (!_anchor) continue;
+        const [_alat, _alng] = markerPos(_anchor);
         for (const vRole of ['tank','ifv','apc']) {
           if (allMarkers.some(m => m._side === side && m._role === vRole)) continue;
-          for (let _et = 0; _et < 2000; _et++) {
-            const _ep = [_elat + (Math.random()-0.5)*BBOX_PAD*2,
-                         _elng + (Math.random()-0.5)*BBOX_PAD*2];
-            if (pointInBoundary(_ep[0],_ep[1]) && isNorthOfLine(_ep)===northSide) {
-              createMarker(_ep, side, 1, vRole);
-              console.log('[CDM] ensureVehicles spawned', vRole, side, _ep);
-              break;
-            }
-          }
+          const _ep = [_alat + (Math.random()-0.5)*0.005,
+                       _alng + (Math.random()-0.5)*0.005];
+          createMarker(_ep, side, 1, vRole);
+          console.log('[CDM] ensureVehicles spawned', vRole, side, _ep);
         }
       }
     }
