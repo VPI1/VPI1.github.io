@@ -2466,6 +2466,7 @@ function _buildActTab(m, now, moving) {
     // Visual recon — only offered when the unit has severely limited situational awareness
     // (deep trench fl≥3, or inside a building) and is not already in a firefight.
     // In a firefight the defender spots the attacker automatically from muzzle flash/sound.
+    const fl = m._fortLevel;
     const _reconTerrain = terrainAt(markerPos(m));
     const _lowAware = (fl >= 3 || _reconTerrain === 'urban') && !movingMarkers.has(m);
     if (_lowAware && !inFight && !_incomingFight) {
@@ -2486,7 +2487,7 @@ function _buildActTab(m, now, moving) {
       h += _pb('Conduct Damage Assessment (BDA)', '🔍', 'tac', "_pa('bda-start')");
     }
     h += `<div class="psec">Fortification</div>`;
-    const fl = m._fortLevel; const fn = FORT_LABELS[fl] || 'None';
+    const fn = FORT_LABELS[fl] || 'None';
     const fMax = fl >= FORT_MAX;
     if (m._fortifying) {
       const _rawEl = (Date.now()-m._fortStartAt)*TIME_SCALE/1000;
