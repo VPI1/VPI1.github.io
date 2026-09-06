@@ -4403,7 +4403,7 @@ function applyArtilleryImpact(unit, pending) {
   const label = unit._role === 'mortar' ? 'Mortar' : 'Artillery';
   if (Math.random() < 0.15) {
     const missDir = ['long','short','left','right'][Math.floor(Math.random()*4)];
-    unitLog(unit, `${label} — miss`);
+    unitLog(unit, `${label} — round missed (${missDir}) · no detonation in target area`);
     if (activePanel && allMarkers.includes(activePanel)) renderPanel();
     return;
   }
@@ -4416,32 +4416,34 @@ function applyArtilleryImpact(unit, pending) {
   const finalR = blastR + Math.floor(Math.random() * 60 - 30);
   const blastCircle = L.circle(impact, { radius: finalR, color: '#ff9500', fillOpacity: 0.22, weight: 2 }).addTo(map);
   setTimeout(() => map.removeLayer(blastCircle), 4000);
+  // Pre-collect affected units before any are removed by damageUnit
+  const _affectedUnits = [...allMarkers].filter(m => segMeters(markerPos(m), impactPt) <= finalR);
   let hits = 0, destroyed = 0;
-  [...allMarkers].forEach(m => {
-    if (segMeters(markerPos(m), impactPt) <= finalR) {
-      const distToUnit = segMeters(markerPos(m), impactPt);
-      const shellType = unit._role === 'mortar' ? 'mortar' : 'arty';
-      // Structural damage to the position regardless of personnel casualties
-      if (m._fortLevel > 0) damageFortification(m, distToUnit, finalR, shellType);
-      const artCover = FORT_COVER.artillery[m._fortLevel ?? 0] ?? 0;
-      if (Math.random() < artCover) {
-        unitLog(m, `Shell nearby — cover held (${FORT_LABELS[m._fortLevel ?? 0] || 'none'})`);
-        return;
-      }
-      const cas = 1 + Math.floor(Math.random() * 2);
-      const wasDestroyed = damageUnit(m, cas);
-      unitLog(m, `Hit by ${label.toLowerCase()} shell −${cas}${wasDestroyed?' (destroyed)':''}`);
-      if (wasDestroyed) destroyed++; else hits++;
+  _affectedUnits.forEach(m => {
+    const distToUnit = segMeters(markerPos(m), impactPt);
+    const shellType = unit._role === 'mortar' ? 'mortar' : 'arty';
+    // Structural damage to the position regardless of personnel casualties
+    if (m._fortLevel > 0) damageFortification(m, distToUnit, finalR, shellType);
+    const artCover = FORT_COVER.artillery[m._fortLevel ?? 0] ?? 0;
+    if (Math.random() < artCover) {
+      unitLog(m, `${label} shell — cover held (${FORT_LABELS[m._fortLevel ?? 0] || 'none'})`);
+      return;
     }
+    const cas = 1 + Math.floor(Math.random() * 2);
+    const wasDestroyed = damageUnit(m, cas);
+    unitLog(m, `${label} impact · −${cas}${wasDestroyed ? ' · DESTROYED' : ' · survived'} · ${Math.round(distToUnit)}m from blast center`);
+    if (wasDestroyed) destroyed++; else hits++;
   });
   const total = hits + destroyed;
+  const _hitDesc = _affectedUnits.map(m => ROLES[m._role]?.label ?? m._role).join(', ');
+  if (total === 0) {
+    unitLog(unit, `${label} — round detonated · no targets in ${Math.round(finalR)}m blast radius`);
+  } else {
+    unitLog(unit, `${label} — round detonated · BDA pending (${_hitDesc} in zone)`);
+  }
   const resultText = total === 0
-    ? `${label} — miss · no casualties`
-    : (() => {
-        const hitDesc = [...allMarkers].filter(m => segMeters(markerPos(m), impactPt) <= finalR)
-          .map(m => ROLES[m._role]?.label ?? m._role).join(', ');
-        return `${label} — HIT · ${total} casualt${total===1?'y':'ies'}${destroyed?` · ${destroyed} destroyed`:''} · ${hitDesc}`;
-      })();
+    ? `${label} — detonated · no targets in blast radius`
+    : `${label} BDA — ${hits} casualt${hits===1?'y':'ies'}${destroyed ? ` · ${destroyed} DESTROYED` : ''} · ${_hitDesc}`;
   // Result only confirmed with recon on the impact area
   confirmOrQueue(unit._side, impactPt[0], impactPt[1],
     [{ marker: unit, text: resultText }],
@@ -6002,7 +6004,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDO';
+const VERSION = '2026-09-06-CDP';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
