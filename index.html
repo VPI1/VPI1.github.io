@@ -5989,7 +5989,7 @@ function openFBConfig() {
 
 const VERSION = '2026-08-22-CDJ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-08-22-v3'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-08-22-v4'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -6953,13 +6953,13 @@ async function main() {
       }
     }
 
-    // ── Armored vehicles — 1 tank, 1 IFV, 1 APC per side (mid-rear) ──
+    // ── Armored vehicles — 1 tank, 1 IFV, 1 APC per side ──
     _ltxt('Armored vehicles… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
       for (const vRole of ['tank','ifv','apc']) {
-        const vPt = pickBand(northSide, 3.0, 8.0) ?? pickBand(northSide, 1.5, 10.0);
-        if (vPt) createMarker(vPt, side, 1, vRole);
+        const vPt = pickSpotSep(northSide, vRole);
+        if (vPt) { markOccupied(vPt, vRole, northSide); createMarker(vPt, side, 1, vRole); }
       }
     }
 
