@@ -1057,7 +1057,7 @@ function soldierIcon(side, count, role = '') {
 }
 
 // ── globals ───────────────────────────────────────────────────
-let TIME_SCALE = 20;  // controlled by admin speed slider
+let TIME_SCALE = 1;   // controlled by admin speed slider (default 1x real-time)
 Object.defineProperty(window, 'WALK_MS', { get: () => 1.111 * TIME_SCALE, configurable: true });
 
 // ── terrain polygons (populated after OSM load) ───────────────
@@ -1486,15 +1486,28 @@ function leaveFortPosition(m) {
     .bindTooltip(`${label} (abandoned)`, { permanent: false, direction: 'top' });
   marker.on('click', () => showFortPositionInfo(id));
   // builderSide: own side always sees it; enemy only sees it with recon
-  fortPositions.push({ id, lat: pos.lat, lng: pos.lng, level: lvl, marker, builderSide: m._side });
+  fortPositions.push({
+    id, lat: pos.lat, lng: pos.lng, level: lvl, marker, builderSide: m._side,
+    wallBreached: m._wallBreached ?? false,
+    timestamp: Date.now()
+  });
   syncFortPositionsToFirebase();
 }
 
 function showFortPositionInfo(id) {
   const fp = fortPositions.find(f => f.id === id);
   if (!fp) return;
-  const label = FORT_LABELS[fp.level] || fp.level;
-  showToast(`Abandoned position: ${label} — unit arriving here will occupy it`, '#8d6e63');
+  const label = FORT_ABANDON_LABELS[fp.level] || FORT_LABELS[fp.level];
+  const parts = [`${label}`];
+  if (fp.wallBreached) parts.push('wall breached');
+  if (fp.builderSide)  parts.push(`built by ${fp.builderSide}`);
+  if (fp.timestamp) {
+    const _d = new Date(fp.timestamp);
+    const _ts = String(_d.getHours()).padStart(2,'0') + ':' + String(_d.getMinutes()).padStart(2,'0') + ':' + String(_d.getSeconds()).padStart(2,'0');
+    parts.push(`intel as of ${_ts}`);
+  }
+  parts.push('unit moving here will occupy it');
+  showToast(parts.join(' · '), '#8d6e63');
 }
 
 function checkOccupyFortPosition(unit) {
@@ -1521,7 +1534,7 @@ function checkOccupyFortPosition(unit) {
 
 function syncFortPositionsToFirebase() {
   if (!_fbDb) return;
-  const data = fortPositions.map(fp => ({ id: fp.id, lat: fp.lat, lng: fp.lng, level: fp.level, builderSide: fp.builderSide }));
+  const data = fortPositions.map(fp => ({ id: fp.id, lat: fp.lat, lng: fp.lng, level: fp.level, builderSide: fp.builderSide, wallBreached: fp.wallBreached ?? false, timestamp: fp.timestamp ?? null }));
   _fbDb.ref('fort_positions').set(data.length ? data : null).catch(() => {});
 }
 
@@ -1537,7 +1550,7 @@ function applyFortPositionsFromFirebase(arr) {
       .bindTooltip(`${label} (abandoned)`, { permanent: false, direction: 'top' });
     const id = d.id;
     marker.on('click', () => showFortPositionInfo(id));
-    fortPositions.push({ id: d.id, lat: d.lat, lng: d.lng, level: d.level, marker, builderSide: d.builderSide });
+    fortPositions.push({ id: d.id, lat: d.lat, lng: d.lng, level: d.level, marker, builderSide: d.builderSide, wallBreached: d.wallBreached ?? false, timestamp: d.timestamp ?? null });
   }
 }
 
@@ -1587,6 +1600,34 @@ let rulerMode = false, rulerPoints = [], rulerLine = null, rulerLabel = null;
 
 function fmtDist(m) { return m >= 1000 ? (m/1000).toFixed(2) + ' km' : Math.round(m) + ' m'; }
 function fmtETA(sec) { sec = Math.ceil(sec); if (sec < 60) return sec + 's'; return Math.floor(sec/60) + 'm ' + (sec%60) + 's'; }
+
+// ── Draggable panel utility ──────────────────────────────────────────────────
+function makeDraggable(el) {
+  if (el._draggable) return;
+  el._draggable = true;
+  let _ox = 0, _oy = 0;
+  el.addEventListener('mousedown', function(ev) {
+    const _t = ev.target;
+    if (_t.closest('button,input,select,textarea,a') || ev.button !== 0) return;
+    const _r = el.getBoundingClientRect();
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+    el.style.left = _r.left + 'px'; el.style.top = _r.top + 'px';
+    _ox = ev.clientX - _r.left; _oy = ev.clientY - _r.top;
+    el.style.cursor = 'grabbing';
+    const _mm = function(e2) {
+      el.style.left = Math.max(0, Math.min(window.innerWidth  - el.offsetWidth,  e2.clientX - _ox)) + 'px';
+      el.style.top  = Math.max(0, Math.min(window.innerHeight - el.offsetHeight, e2.clientY - _oy)) + 'px';
+    };
+    const _mu = function() {
+      el.style.cursor = '';
+      document.removeEventListener('mousemove', _mm);
+      document.removeEventListener('mouseup',   _mu);
+    };
+    document.addEventListener('mousemove', _mm);
+    document.addEventListener('mouseup',   _mu);
+    ev.preventDefault();
+  });
+}
 
 function toggleRuler() {
   rulerMode = !rulerMode;
@@ -2236,6 +2277,15 @@ function showPanelRange(m) {
       }).addTo(map);
       panelAntennaCircles.push(_ar);
     }
+    // Show standalone (abandoned) friendly antenna coverage
+    for (const _sa of standaloneAntennas) {
+      if (_sa.side !== m._side) continue;
+      const _sar = L.circle(_sa.latlng, {
+        radius: sigHorizon(_sa.heightM) + sigHorizon(m._role === 'mavic' ? 200 : 30),
+        color: '#ffd54f', fill: false, weight: 1, opacity: 0.40, dashArray: '4 7'
+      }).addTo(map);
+      panelAntennaCircles.push(_sar);
+    }
   }
 }
 
@@ -2366,6 +2416,14 @@ function _buildActTab(m, now, moving) {
     h += _pb('Bounding Overwatch', '⇌', 'tac', "_pa('bounding')", m._ammo<=0);
     const holdOn = m._conds?.holdPos;
     h += _pb(holdOn ? 'Release Hold Position' : 'Hold Position', '⬙', holdOn?'on':'tac', "_pa('hold-toggle')");
+    h += `<div class="psec">Intelligence</div>`;
+    if (m._bdaAt) {
+      const _bRem = Math.max(0, Math.ceil((m._bdaAt - now) / 1000));
+      h += _pb(`BDA in progress — ${fmtETA(_bRem)}`, '🔍', 'on', '', true);
+      h += _pb('Abort Assessment', '✕', '', "_pa('bda-abort')");
+    } else {
+      h += _pb('Conduct Damage Assessment (BDA)', '🔍', 'tac', "_pa('bda-start')");
+    }
     h += `<div class="psec">Fortification</div>`;
     const fl = m._fortLevel; const fn = FORT_LABELS[fl] || 'None';
     const fMax = fl >= FORT_MAX;
@@ -2406,6 +2464,31 @@ function _buildActTab(m, now, moving) {
   }
 
   if (m._role === 'fpv' || m._role === 'mavic') {
+    // Intelligence / BDA
+    h += `<div class="psec">Intelligence</div>`;
+    if (m._bdaAt) {
+      const _bRem = Math.max(0, Math.ceil((m._bdaAt - now) / 1000));
+      h += _pb(`BDA in progress — ${fmtETA(_bRem)}`, '🔍', 'on', '', true);
+      h += _pb('Abort Assessment', '✕', '', "_pa('bda-abort')");
+    } else {
+      h += _pb('Conduct Damage Assessment (BDA)', '🔍', 'tac', "_pa('bda-start')");
+    }
+    // Nearby standalone antenna dismantle
+    const _nearSA = standaloneAntennas.filter(_a => segMeters(markerPos(m), [_a.latlng.lat, _a.latlng.lng]) <= 300);
+    if (_nearSA.length > 0) {
+      h += `<div class="psec">Nearby Antenna</div>`;
+      const _sa0 = _nearSA[0];
+      const _saEnemy = _sa0.side !== m._side;
+      const _saDurSec = m._role === 'fpv' ? 300 : 600;
+      if (m._dismantleAt) {
+        const _dRem = Math.max(0, Math.ceil((m._dismantleAt - now) / 1000));
+        h += _pb(`Dismantling — ${fmtETA(_dRem)}`, '🔧', 'on', '', true);
+        h += _pb('Abort', '✕', '', "_pa('antenna-dismantle-abort')");
+      } else {
+        h += _pb(_saEnemy ? 'Destroy enemy antenna' : 'Retrieve own antenna', _saEnemy ? '💥' : '🔧', 'tac', `_pa('antenna-dismantle-${_sa0.id}')`, movingMarkers.has(m));
+        h += `<div class="pb-note">~${fmtETA(_saDurSec)} · ${fmtDist(segMeters(markerPos(m),[_sa0.latlng.lat,_sa0.latlng.lng]))}</div>`;
+      }
+    }
     h += `<div class="psec">Terrain</div>`;
     h += _pb('Calculate Horizon Here', '◎', 'tac', "_pa('calc-horizon')");
     h += `<div class="psec">Relay Antenna</div>`;
@@ -2672,6 +2755,81 @@ function _buildStatusTab(m) {
   return h || '<div class="pb-note">No active effects.</div>';
 }
 
+// ── Battle Damage Assessment (BDA) ───────────────────────────────────────────
+function startBDA(m) {
+  if (m._bdaAt) { showToast('BDA already in progress.', '#888'); return; }
+  const _pos = markerPos(m);
+  const _terrain = terrainAt(_pos);
+  // Base duration in seconds (real-time at 1x)
+  let _baseSec = { mavic: 120, fpv: 180 }[m._role] ?? 480;
+  if (_terrain === 'urban') _baseSec += 180;
+  else if (_terrain === 'forest') _baseSec += 120;
+  else _baseSec = Math.max(60, _baseSec - 60);
+  // Weather penalty
+  const _vis = weatherData?.vis ?? 10000;
+  if (_vis < 1000) _baseSec += 300;
+  else if (_vis < 3000) _baseSec += 120;
+  _baseSec = Math.max(60, _baseSec);
+  m._bdaAt = Date.now() + _baseSec * 1000 / TIME_SCALE;
+  m._bdaTerrain = _terrain;
+  const _etaStr = fmtETA(Math.round(_baseSec / TIME_SCALE));
+  unitLog(m, `BDA ordered — conducting damage assessment · ETA ${_etaStr}`);
+  showToast(`Damage assessment ordered — ${_etaStr}`, '#ffd54f');
+  renderPanel();
+}
+function completeBDA(m) {
+  if (!m._bdaAt) return;
+  m._bdaAt = 0;
+  const _terrain = m._bdaTerrain || terrainAt(markerPos(m));
+  m._bdaTerrain = null;
+  // Success probability
+  let _pct = 0.70;
+  if (_terrain === 'urban')  _pct -= 0.15;
+  else if (_terrain === 'forest') _pct -= 0.10;
+  const _vis = weatherData?.vis ?? 10000;
+  if (_vis < 1000) _pct -= 0.30;
+  else if (_vis < 3000) _pct -= 0.15;
+  if (m._role === 'mavic') _pct += 0.18;
+  else if (m._role === 'fpv') _pct += 0.10;
+  _pct = Math.max(0.05, Math.min(0.95, _pct)) + (Math.random() - 0.5) * 0.10;
+  const _terrDesc = { urban: 'urban area', forest: 'forest', field: 'open ground' }[_terrain] || _terrain;
+  if (Math.random() < _pct) {
+    const _cas = Math.floor(Math.random() * 4);
+    const _note = _cas > 0 ? `~${_cas} confirmed KIA/WIA` : 'no confirmed casualties';
+    unitLog(m, `BDA complete — ${_note} · ${_terrDesc} · ${Math.round(_pct*100)}% confidence`);
+    if (m._side === userSide) showToast(`BDA: ${_note}`, '#66bb6a');
+  } else {
+    unitLog(m, `BDA inconclusive — target area obscured (${_terrDesc})`);
+    if (m._side === userSide) showToast('BDA inconclusive — poor visibility', '#ffa726');
+  }
+  renderPanel();
+}
+function startAntennaDismantling(m, antId) {
+  const _ant = standaloneAntennas.find(a => a.id === antId);
+  if (!_ant) return;
+  const _durSec = m._role === 'fpv' ? 300 : 600;
+  m._dismantleAt = Date.now() + _durSec * 1000 / TIME_SCALE;
+  m._dismantleTarget = antId;
+  const _lbl = _ant.side !== m._side ? 'enemy' : 'own';
+  unitLog(m, `Dismantling ${_lbl} antenna — ETA ${fmtETA(Math.round(_durSec / TIME_SCALE))}`);
+  showToast(`Dismantling antenna — ETA ${fmtETA(Math.round(_durSec / TIME_SCALE))}`, '#ffd54f');
+  renderPanel();
+}
+function completeAntennaDismantling(m) {
+  if (!m._dismantleAt) return;
+  m._dismantleAt = 0;
+  const _ant = standaloneAntennas.find(a => a.id === m._dismantleTarget);
+  m._dismantleTarget = null;
+  if (_ant) {
+    try { map.removeLayer(_ant.marker); } catch(e) {}
+    standaloneAntennas.splice(standaloneAntennas.indexOf(_ant), 1);
+    const _lbl = _ant.side !== m._side ? 'Enemy' : 'Own';
+    unitLog(m, `${_lbl} antenna dismantled`);
+    if (m._side === userSide) showToast('Antenna dismantled!', '#66bb6a');
+  }
+  renderPanel();
+}
+
 function toggleTeamLog() {
   const _p = document.getElementById('team-log-panel');
   const _open = _p.style.display !== 'none';
@@ -2679,7 +2837,15 @@ function toggleTeamLog() {
   if (!_open) { _teamLogSide = userSide || 'blue'; _renderTeamLogContent(); }
   document.getElementById('tlog-btn').classList.toggle('ruler-on', !_open);
 }
-function _setTeamLogSide(side) { _teamLogSide = side; _renderTeamLogContent(); }
+// Apply drag to static floating panels
+try {
+  makeDraggable(document.getElementById('unit-panel'));
+  makeDraggable(document.getElementById('team-log-panel'));
+} catch(_de) {}
+function _setTeamLogSide(side) {
+  if (userSide && side !== userSide) return; // non-admin cannot view opposing team's log
+  _teamLogSide = side; _renderTeamLogContent();
+}
 function _renderTeamLogContent() {
   const entries = _teamLog[_teamLogSide] || [];
   const sc = _teamLogSide === 'blue' ? '#64b0f7' : '#ef7070';
@@ -2687,8 +2853,14 @@ function _renderTeamLogContent() {
   if (title) title.textContent = `${_teamLogSide.toUpperCase()} TEAM LOG (${entries.length})`;
   const blueBtn = document.getElementById('tlog-blue');
   const redBtn  = document.getElementById('tlog-red');
-  if (blueBtn) blueBtn.className = 'ptab' + (_teamLogSide==='blue'?' on':'');
-  if (redBtn)  redBtn.className  = 'ptab' + (_teamLogSide==='red'?' on':'');
+  if (blueBtn) {
+    blueBtn.className = 'ptab' + (_teamLogSide==='blue'?' on':'');
+    blueBtn.style.display = (userSide && userSide !== 'blue') ? 'none' : '';
+  }
+  if (redBtn) {
+    redBtn.className  = 'ptab' + (_teamLogSide==='red'?' on':'');
+    redBtn.style.display = (userSide && userSide !== 'red') ? 'none' : '';
+  }
   const cont = document.getElementById('team-log-content');
   if (!cont) return;
   if (!entries.length) { cont.innerHTML = '<div class="pb-note">No events recorded yet.</div>'; return; }
@@ -2891,6 +3063,13 @@ window._pa = function(action) {
   else if (action === 'supply-drones')  { requestSupply(m, 'drones'); }
   else if (action === 'supply-reinf')   { requestSupply(m, 'reinf'); }
   else if (action === 'supply-battery') { requestSupply(m, 'battery'); }
+  else if (action === 'bda-start')  { startBDA(m); }
+  else if (action === 'bda-abort')  { m._bdaAt = 0; m._bdaTerrain = null; unitLog(m, 'BDA aborted'); renderPanel(); }
+  else if (action.startsWith('antenna-dismantle-')) {
+    const _aid = action.slice('antenna-dismantle-'.length);
+    if (_aid === 'abort') { m._dismantleAt = 0; m._dismantleTarget = null; unitLog(m, 'Antenna dismantle aborted'); renderPanel(); }
+    else startAntennaDismantling(m, _aid);
+  }
   else if (action === 'convoy-route-plan')  { enterConvoyRouteDraw(m); }
   else if (action === 'convoy-route-clear') { m._convoyRoute = null; renderPanel(); }
   else if (action === 'supply-cancel') {
@@ -4363,6 +4542,19 @@ function clearRoute(marker) {
 }
 
 function assignRoute(marker, route) {
+  // Antenna: leave it as a standalone relay when the unit moves away
+  if (marker._antennaHeightM && marker._antennaEntry) {
+    const _ae = marker._antennaEntry;
+    const _daIdx = droneAntennas.indexOf(_ae);
+    if (_daIdx !== -1) droneAntennas.splice(_daIdx, 1);
+    _ae.unit = null; _ae.standalone = true;
+    _ae.id = 'sa_' + Math.random().toString(36).slice(2);
+    _ae.abandonedAt = Date.now();
+    standaloneAntennas.push(_ae);
+    unitLog(marker, 'Antenna left behind — operating as standalone relay');
+    marker._antennaHeightM = null; marker._antennaPos = null;
+    marker._antennaEntry = null; marker._outOfSignal = false;
+  }
   // Leaving a fortified position — leave a persistent marker at the old location
   if ((marker._fortLevel ?? 0) > 0 || marker._fortifying) {
     if ((marker._fortLevel ?? 0) > 0) leaveFortPosition(marker);
@@ -4918,6 +5110,10 @@ function processFortifications(now) {
     }
   }
   for (const m of allMarkers) {
+    // BDA completion
+    if (m._bdaAt && Date.now() >= m._bdaAt) completeBDA(m);
+    // Antenna dismantle completion
+    if (m._dismantleAt && Date.now() >= m._dismantleAt) completeAntennaDismantling(m);
     if (m._role !== 'infantry' || !m._wallBreachingAt || m._wallBreached) continue;
     if (Date.now() >= m._wallBreachingAt) {
       m._wallBreached = true; m._wallBreachingAt = 0;
@@ -5420,6 +5616,7 @@ function _renderAdminPanel() {
   const panel = document.createElement('div');
   panel.id = 'admin-panel';
   panel.style.cssText = 'position:fixed;top:60px;left:14px;background:#12122a;border:1px solid #555;border-radius:8px;padding:14px;font-family:monospace;font-size:11px;width:260px;max-height:80vh;overflow-y:auto;z-index:9500;box-shadow:0 2px 18px #000d';
+  setTimeout(() => makeDraggable(panel), 0);
   const roleOpts = Object.entries(ROLES).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -5523,6 +5720,7 @@ function openFBConfig() {
   const panel = document.createElement('div');
   panel.id = 'fb-config-panel';
   panel.style.cssText = 'position:fixed;top:60px;right:16px;background:#1a1a2e;border:1px solid #444;border-radius:6px;padding:14px;font-family:monospace;font-size:11px;min-width:300px;z-index:9000;box-shadow:0 2px 14px #000c';
+  setTimeout(() => makeDraggable(panel), 0);
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <b style="color:#42a5f5">Multiplayer (Firebase)</b>
@@ -5543,7 +5741,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CDE';
+const VERSION = '2026-08-22-CDF';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7146,12 +7344,23 @@ function sigHorizon(h) { return Math.sqrt(2 * _SIG_R_EFF * Math.max(0, h)); }
  */
 function droneSignalRangeM(m) {
   const base = m._role === 'mavic' ? MAVIC_CTRL_HORIZON_M : FPV_RADIO_HORIZON_M;
-  if (!m._antennaHeightM) return base;
-  const bonus = sigHorizon(m._antennaHeightM) - sigHorizon(1.8);
-  return Math.round(base + Math.max(0, bonus));
+  if (m._antennaHeightM) {
+    const bonus = sigHorizon(m._antennaHeightM) - sigHorizon(1.8);
+    return Math.round(base + Math.max(0, bonus));
+  }
+  // Check if within range of a standalone friendly antenna
+  const _mPos = markerPos(m);
+  for (const _sa of standaloneAntennas) {
+    if (_sa.side !== m._side) continue;
+    if (segMeters(_mPos, [_sa.latlng.lat, _sa.latlng.lng]) <= sigHorizon(_sa.heightM)) {
+      return Math.round(base + Math.max(0, sigHorizon(_sa.heightM) - sigHorizon(1.8)));
+    }
+  }
+  return base;
 }
 
-const droneAntennas = [];       // [{latlng, heightM, terrain, marker, side, unit}]
+const droneAntennas     = [];   // [{latlng, heightM, terrain, marker, side, unit}]
+const standaloneAntennas = [];  // [{id, latlng, heightM, terrain, marker, side, abandonedAt}]
 const pendingAntennaTimers = new Map(); // unit marker → timeoutId
 
 /** Overpass API query to detect building or forest within 50m */
