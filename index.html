@@ -377,6 +377,18 @@ function loadFirebaseSDK(cb) {
   <button class="tb-btn" id="gh-btn" onclick="openGHConfig()" title="GitHub sync settings">⇅</button>
   <button class="tb-btn" id="mp-btn" onclick="openFBConfig()" title="Multiplayer / real-time sync">⟳</button>
   <button class="tb-btn" id="adm-btn" onclick="openAdminPanel()" title="Admin panel">⚙</button>
+  <button class="tb-btn" id="tlog-btn" onclick="toggleTeamLog()" title="Team activity log">☰</button>
+</div>
+<div id="team-log-panel" style="display:none;position:fixed;bottom:60px;left:10px;z-index:1500;width:350px;max-height:56vh;background:#161b27;border:1px solid #2e3c5e;border-radius:10px;box-shadow:0 4px 20px #000a;flex-direction:column;overflow:hidden;font-family:monospace">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-bottom:1px solid #2e3c5e;background:#1c2130;flex-shrink:0">
+    <span id="team-log-title" style="color:#c0c8d8;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase">Team Log</span>
+    <div style="display:flex;gap:5px;align-items:center">
+      <button class="ptab" id="tlog-blue" onclick="_setTeamLogSide('blue')" style="padding:2px 8px;font-size:10px">Blue</button>
+      <button class="ptab" id="tlog-red"  onclick="_setTeamLogSide('red')"  style="padding:2px 8px;font-size:10px">Red</button>
+      <button onclick="toggleTeamLog()" style="background:none;border:none;color:#889;font-size:15px;cursor:pointer;line-height:1;padding:0 2px">✕</button>
+    </div>
+  </div>
+  <div id="team-log-content" style="overflow-y:auto;flex:1;padding:3px 0"></div>
 </div>
 <div id="annotate-toolbar">
   <button class="ann-btn" id="ann-line-btn"   onclick="setAnnotateMode('line')">— Line</button>
@@ -951,7 +963,10 @@ function distToLine([lat, lng]) { return Math.abs(lat - latOnLine(lng)); }
 
 // ── soldier roles (infantry sub-units) ───────────────────────
 const SOLDIER_ROLES = {
-  rifleman: { label: 'Rifleman', short: 'RF', icon: '●', ammo: 8, rangeM: 400 },
+  rifleman:    { label: 'Rifleman',     short: 'RF',  icon: '●', ammo: 8, rangeM: 400 },
+  fpv_pilot:   { label: 'FPV Pilot',    short: 'PLT', icon: '▲', ammo: 1, rangeM: 150 },
+  fpv_spotter: { label: 'Spotter/Asst', short: 'SPT', icon: '◈', ammo: 1, rangeM: 150 },
+  fpv_driver:  { label: 'Driver/Sec.',  short: 'DRV', icon: '⬡', ammo: 2, rangeM: 200 },
 };
 function mkSoldier(role, id) {
   // Each soldier carries 6-10 magazines
@@ -1344,6 +1359,46 @@ function confirmPatrol() {
 function cancelPatrol() {
   patrolMode = false; patrolActor = null; patrolPoints = [];
   if (patrolLine) { map.removeLayer(patrolLine); patrolLine = null; }
+  setStatus('');
+}
+
+// ── Convoy route draw mode ───────────────────────────────────────────────────
+function enterConvoyRouteDraw(unit) {
+  if (unit._supply) { showToast('Convoy already in transit.', '#888'); return; }
+  convoyRouteMode = true;
+  convoyRouteUnit = unit;
+  const depot = supplyDepotPos(unit._side);
+  const uPos = markerPos(unit);
+  convoyRoutePoints = [depot, uPos]; // depot → unit as initial straight line
+  convoyRouteLine = L.polyline(convoyRoutePoints, { color: '#66bb6a', weight: 2.5, dashArray: '7 5', opacity: 0.75 }).addTo(map);
+  closePanel();
+  setStatus('Convoy route: click waypoints along the path · Enter/dblclick to confirm · Esc to cancel');
+}
+function convoyRouteClick(latlng) {
+  if (!convoyRouteMode) return;
+  // Insert waypoint before the last point (unit position)
+  convoyRoutePoints.splice(convoyRoutePoints.length - 1, 0, [latlng.lat, latlng.lng]);
+  if (convoyRouteLine) convoyRouteLine.setLatLngs(convoyRoutePoints);
+  const n = convoyRoutePoints.length - 2;
+  setStatus(`Convoy route: ${n} waypoint${n!==1?'s':''} added · Enter to confirm · Esc to cancel`);
+}
+function finishConvoyRoute() {
+  if (!convoyRouteMode) return;
+  const unit = convoyRouteUnit;
+  unit._convoyRoute = [...convoyRoutePoints];
+  const _km = (unit._convoyRoute.reduce((a,p,i)=>i?a+segMeters(unit._convoyRoute[i-1],p):0,0)/1000).toFixed(1);
+  cleanupConvoyRoute();
+  showToast(`Convoy route set — ${_km} km · request supply when ready`, '#66bb6a');
+  if (activePanel === unit) renderPanel();
+}
+function cancelConvoyRoute() {
+  if (!convoyRouteMode) return;
+  cleanupConvoyRoute();
+  showToast('Convoy route planning cancelled', '#888');
+}
+function cleanupConvoyRoute() {
+  convoyRouteMode = false; convoyRouteUnit = null; convoyRoutePoints = [];
+  if (convoyRouteLine) { map.removeLayer(convoyRouteLine); convoyRouteLine = null; }
   setStatus('');
 }
 
@@ -2019,14 +2074,29 @@ function showToast(msg, color) {
   setTimeout(() => t.remove(), 4500);
 }
 
+// Team-level event log and convoy/FPV drawing state
+const _teamLog = { blue: [], red: [] };
+let _teamLogSide = 'blue';
+let convoyRouteMode = false, convoyRouteUnit = null, convoyRoutePoints = [], convoyRouteLine = null;
+let _fpvMapClickHandler = null;
+
 function unitLog(m, text) {
   if (!m || !m._log) return;
   const now = new Date();
   const hh = String(now.getHours()).padStart(2,'0');
   const mm = String(now.getMinutes()).padStart(2,'0');
   const ss = String(now.getSeconds()).padStart(2,'0');
-  m._log.unshift({ time: `${hh}:${mm}:${ss}`, text });
-  if (m._log.length > 20) m._log.length = 20;
+  const _entry = { time: `${hh}:${mm}:${ss}`, text };
+  m._log.unshift(_entry);
+  if (m._log.length > 80) m._log.length = 80;
+  // Aggregate to team log
+  const _side = m._side;
+  if (_teamLog[_side]) {
+    _teamLog[_side].unshift({ ..._entry, role: ROLES[m._role]?.label ?? m._role });
+    if (_teamLog[_side].length > 500) _teamLog[_side].length = 500;
+  }
+  const _tlp = document.getElementById('team-log-panel');
+  if (_tlp && _tlp.style.display !== 'none') _renderTeamLogContent();
 }
 
 // ── unit removal / damage ─────────────────────────────────────
@@ -2085,6 +2155,7 @@ function exitCombatMode() {
   combatMode = null; combatActor = null;
   if (combatArc) { map.removeLayer(combatArc); combatArc = null; }
   while (combatTargetHandlers.length) { const { m, h } = combatTargetHandlers.pop(); m.off('click', h); }
+  if (_fpvMapClickHandler) { map.off('click', _fpvMapClickHandler); _fpvMapClickHandler = null; }
   clearFPVHorizon();
   if (!drawMode) { map.getContainer().style.cursor = ''; setStatus(''); }
 }
@@ -2317,7 +2388,7 @@ function _buildActTab(m, now, moving) {
         const _wb = m._wallBreached, _wbt = m._wallBreachingAt;
         if (_wb) h += `<div class="pb-note" style="color:#81c784">Wall breach active — free movement</div>`;
         else if (_wbt > 0) h += _pb(`Breaching wall — ${Math.max(0,Math.round((_wbt-Date.now())/1000))}s`, '◌', '', '', true);
-        else h += _pb('Breach wall for movement', '⊞', 'tac', "_pa('fort-breach')");
+        else h += `<div class="pb-note" style="color:#aaa;font-size:10px">Wall breach begins when fortification starts</div>`;
       } else {
         h += _pb(fMax ? 'Max Fortification' : `Dig In → ${FORT_LABELS[fl+1]??''}`, '⬡', fMax?'':'tac', "_pa('fort-start')", fMax);
       }
@@ -2423,6 +2494,14 @@ function _buildActTab(m, now, moving) {
     const etaSec = Math.round(distKm * SUPPLY_MS_PER_KM / 1000);
     const etaStr = etaSec >= 60 ? `${Math.floor(etaSec/60)}m ${etaSec%60}s` : `${etaSec}s`;
     h += `<div class="pb-note">Depot ${Math.round(distKm)} km away · convoy ETA ~${etaStr}</div>`;
+    // Convoy route plan/display
+    if (m._convoyRoute?.length >= 2) {
+      const _crdKm = (m._convoyRoute.reduce((acc,p,i)=>i?acc+segMeters(m._convoyRoute[i-1],p):0,0)/1000).toFixed(1);
+      h += `<div class="pb-note" style="color:#81c784">Route planned — ${_crdKm} km · convoy follows waypoints</div>`;
+      h += _pb('Clear convoy route', '✕', '', "_pa('convoy-route-clear')");
+    } else {
+      h += _pb('Plan convoy route', '⊾', 'tac', "_pa('convoy-route-plan')");
+    }
     if (m._role === 'infantry' || m._role === 'mortar' || m._role === 'artillery') {
       const ammoFull = m._ammo >= m._maxAmmo;
       h += _pb(`Request Ammo${ammoFull?' (full)':''}`, '◈', ammoFull?'':'tac', ammoFull?'':"_pa('supply-ammo')", ammoFull);
@@ -2591,6 +2670,31 @@ function _buildStatusTab(m) {
   }
 
   return h || '<div class="pb-note">No active effects.</div>';
+}
+
+function toggleTeamLog() {
+  const _p = document.getElementById('team-log-panel');
+  const _open = _p.style.display !== 'none';
+  _p.style.display = _open ? 'none' : 'flex';
+  if (!_open) { _teamLogSide = userSide || 'blue'; _renderTeamLogContent(); }
+  document.getElementById('tlog-btn').classList.toggle('ruler-on', !_open);
+}
+function _setTeamLogSide(side) { _teamLogSide = side; _renderTeamLogContent(); }
+function _renderTeamLogContent() {
+  const entries = _teamLog[_teamLogSide] || [];
+  const sc = _teamLogSide === 'blue' ? '#64b0f7' : '#ef7070';
+  const title = document.getElementById('team-log-title');
+  if (title) title.textContent = `${_teamLogSide.toUpperCase()} TEAM LOG (${entries.length})`;
+  const blueBtn = document.getElementById('tlog-blue');
+  const redBtn  = document.getElementById('tlog-red');
+  if (blueBtn) blueBtn.className = 'ptab' + (_teamLogSide==='blue'?' on':'');
+  if (redBtn)  redBtn.className  = 'ptab' + (_teamLogSide==='red'?' on':'');
+  const cont = document.getElementById('team-log-content');
+  if (!cont) return;
+  if (!entries.length) { cont.innerHTML = '<div class="pb-note">No events recorded yet.</div>'; return; }
+  cont.innerHTML = entries.map(e =>
+    `<div class="log-row"><span class="log-t">${e.time}</span><span style="color:${sc};font-size:9px;margin:0 3px;flex-shrink:0">${e.role}</span><span class="log-msg">${e.text}</span></div>`
+  ).join('');
 }
 
 function renderPanel() {
@@ -2787,6 +2891,8 @@ window._pa = function(action) {
   else if (action === 'supply-drones')  { requestSupply(m, 'drones'); }
   else if (action === 'supply-reinf')   { requestSupply(m, 'reinf'); }
   else if (action === 'supply-battery') { requestSupply(m, 'battery'); }
+  else if (action === 'convoy-route-plan')  { enterConvoyRouteDraw(m); }
+  else if (action === 'convoy-route-clear') { m._convoyRoute = null; renderPanel(); }
   else if (action === 'supply-cancel') {
     if (m._supply?.convoyMarker) map.removeLayer(m._supply.convoyMarker);
     m._supply = null;
@@ -2813,7 +2919,11 @@ function requestSupply(unit, type) {
   if (unit._supply) return; // convoy already in transit
   const depot = supplyDepotPos(unit._side);
   const unitPos = markerPos(unit);
-  const distKm = segMeters(depot, unitPos) / 1000;
+  // Use planned convoy route if available; otherwise straight line depot → unit
+  const _cRoute = unit._convoyRoute?.length >= 2 ? unit._convoyRoute : null;
+  const distKm = _cRoute
+    ? _cRoute.reduce((acc,p,i) => i ? acc + segMeters(_cRoute[i-1],p) : 0, 0) / 1000
+    : segMeters(depot, unitPos) / 1000;
   const transitMs = distKm * SUPPLY_MS_PER_KM;
   const arrivesAt = Date.now() + transitMs;
 
@@ -2823,9 +2933,11 @@ function requestSupply(unit, type) {
     html: `<div style="font-size:16px;filter:drop-shadow(0 1px 3px #000);opacity:0.85">${unit._side === 'blue' ? '🚛' : '🚚'}</div>`,
     iconSize: [20, 20], iconAnchor: [10, 10],
   });
-  const convoyMarker = L.marker(depot, { icon: convoyIcon, interactive: false, zIndexOffset: 300 }).addTo(map);
+  const _cStart = _cRoute ? _cRoute[0] : depot;
+  const convoyMarker = L.marker(_cStart, { icon: convoyIcon, interactive: false, zIndexOffset: 300 }).addTo(map);
 
-  unit._supply = { type, arrivesAt, convoyMarker, fromLat: depot[0], fromLng: depot[1], toLat: unitPos[0], toLng: unitPos[1] };
+  unit._supply = { type, arrivesAt, convoyMarker, route: _cRoute,
+    fromLat: _cStart[0], fromLng: _cStart[1], toLat: unitPos[0], toLng: unitPos[1] };
   // Tag the matching deployment point so its panel can show the ETA
   if (type === 'reinf') {
     const dp = nearestDepPoint(unit._side, unit._role, unitPos);
@@ -3612,7 +3724,16 @@ function enterFPVTargetMode(pilot) {
     const h = (e) => { L.DomEvent.stopPropagation(e); executeFPVStrike(pilot, enemy); };
     enemy.on('click', h); combatTargetHandlers.push({ m: enemy, h });
   });
-  setStatus(`FPV ready — click a spotted target within radio horizon (${enemies.length} visible) — Esc to abort`);
+  // Allow clicking any map point within radio horizon (no-spotter point strike)
+  _fpvMapClickHandler = function(_fmEv) {
+    const _fmPos = [_fmEv.latlng.lat, _fmEv.latlng.lng];
+    const _fmDist = segMeters(markerPos(pilot), _fmPos);
+    const _fmMax = droneSignalRangeM(pilot);
+    if (_fmDist > _fmMax) { showToast(`Outside radio horizon — ${fmtDist(_fmDist)}, max ${fmtDist(_fmMax)}`, '#ef5350'); return; }
+    executeFPVPointStrike(pilot, _fmEv.latlng);
+  };
+  map.on('click', _fpvMapClickHandler);
+  setStatus(`FPV ready — click spotted target or any point within horizon (${enemies.length} spotted) — Esc to abort`);
 }
 
 // Step 3: target selected → drone flies in real time
@@ -3648,6 +3769,33 @@ function executeFPVStrike(pilot, target) {
       launchedAt: Date.now()
     }).catch(function() {});
   }
+}
+
+// Step 4: drone arrives → apply casualties
+// Point strike — area damage at a map-clicked position (target: null)
+function executeFPVPointStrike(pilot, latlng) {
+  const fromPos = markerPos(pilot);
+  const toPos = [latlng.lat, latlng.lng];
+  const distM = segMeters(fromPos, toPos);
+  const _maxM = droneSignalRangeM(pilot);
+  if (distM > _maxM) { showToast('Outside radio horizon', '#ef5350'); return; }
+  exitCombatMode();
+  pilot._drones = Math.max(0, pilot._drones - 1);
+  pilot._fpvCooldownUntil = Date.now() + 45000 / TIME_SCALE;
+  const bearing = bearingDeg(fromPos, toPos);
+  const etaSec = Math.round(distM / (55 * TIME_SCALE));
+  const droneMarker = L.marker(pilot.getLatLng(), { icon: fpvDroneIcon(bearing), zIndexOffset: 300 })
+    .addTo(map).bindTooltip(`ETA ${fmtETA(etaSec)}`, { permanent: true, className: 'fpv-eta-tip', direction: 'right', offset: [8,0] });
+  flyingFPVs.push({ droneMarker, pilot, target: null, lat: fromPos[0], lng: fromPos[1], dstLat: latlng.lat, dstLng: latlng.lng });
+  unitLog(pilot, `FPV point strike launched · ETA ${fmtETA(etaSec)} · ${fmtDist(distM)}`);
+  showToast(`FPV launched to map point! ETA ${fmtETA(etaSec)}`, '#ffa726');
+  if (_fbDb) {
+    _fbDb.ref('fpv_events').push({
+      clientId: _fbClientId, fromLat: fromPos[0], fromLng: fromPos[1],
+      toLat: latlng.lat, toLng: latlng.lng, launchedAt: Date.now()
+    }).catch(function() {});
+  }
+  fbSyncUnit(pilot); saveState();
 }
 
 // Step 4: drone arrives → apply casualties
@@ -4048,16 +4196,19 @@ setInterval(() => {
     d._ticks = (d._ticks || 0) + 1;
     if (d._ticks % 10 === 0) {
       const dronePos = [d.lat, d.lng];
+      const _tSide = d.target ? d.target._side : (d.pilot?._side === 'blue' ? 'red' : 'blue');
       const interceptors = allMarkers.filter(m =>
-        m._side === d.target._side &&
+        m._side === _tSide &&
         m._role === 'infantry' &&
         segMeters(markerPos(m), dronePos) <= 100
       );
       if (interceptors.length > 0 && Math.random() < 0.25) {
         map.removeLayer(d.droneMarker);
         flyingFPVs.splice(i, 1);
-        if (!d.remote) applyFPVImpact(d.pilot, d.target, true);
-        else showToast('FPV drone shot down!', '#ffa726');
+        if (!d.remote) {
+          if (d.target) applyFPVImpact(d.pilot, d.target, true);
+          else { unitLog(d.pilot, 'FPV point-strike drone shot down'); showToast('FPV drone shot down!', '#ffa726'); }
+        } else showToast('FPV drone shot down!', '#ffa726');
         continue;
       }
     }
@@ -4069,7 +4220,19 @@ setInterval(() => {
         showExplosion(L.latLng(d.dstLat, d.dstLng), 70);
         showCrater(L.latLng(d.dstLat, d.dstLng), 'fpv');
       } else {
-        applyFPVImpact(d.pilot, d.target, false);
+        if (d.target) {
+          applyFPVImpact(d.pilot, d.target, false);
+        } else {
+          // Point strike — area explosion + damage nearby enemies
+          showExplosion(L.latLng(d.dstLat, d.dstLng), 70);
+          showCrater(L.latLng(d.dstLat, d.dstLng), 'fpv');
+          const _psSide = d.pilot?._side === 'blue' ? 'red' : 'blue';
+          for (const _pm of [...allMarkers]) {
+            if (_pm._side !== _psSide) continue;
+            if (segMeters(markerPos(_pm), [d.dstLat, d.dstLng]) <= 45) damageUnit(_pm, 1 + Math.floor(Math.random() * 2));
+          }
+          if (d.pilot) unitLog(d.pilot, `FPV point strike detonated · ${fmtDist(segMeters(markerPos(d.pilot),[d.dstLat,d.dstLng]))}`);
+        }
       }
     } else {
       const r = step / dist;
@@ -4187,7 +4350,16 @@ function clearRoute(marker) {
   movingMarkers.delete(marker);
   if (marker._side === userSide) marker.dragging.enable();
   if (activePanel === marker) closePanel();
-  fbSyncUnit(marker); // broadcast final resting position
+  // Immediately clear route in sessionStorage and Firebase (don't wait for debounce)
+  if (marker._uid) try { sessionStorage.removeItem('_rt_' + marker._uid); } catch(_e2) {}
+  if (_fbDb && marker._uid && marker._side === userSide) {
+    const _crPos = marker.getLatLng();
+    _fbDb.ref('units_' + userSide + '/' + marker._uid).update({
+      route: null, lat: _crPos.lat, lng: _crPos.lng, updatedAt: Date.now()
+    }).catch(function(){});
+  } else {
+    fbSyncUnit(marker); // fallback broadcast
+  }
 }
 
 function assignRoute(marker, route) {
@@ -4296,7 +4468,8 @@ map.on('click', (e) => {
   if (rulerMode)      { rulerClick(e.latlng); return; }
   if (searchAreaMode) { searchAreaClick(e.latlng); return; }
   if (annotateMode)   { annotateClick(e.latlng); return; }
-  if (patrolMode)     { patrolClick(e.latlng); return; }
+  if (patrolMode)      { patrolClick(e.latlng); return; }
+  if (convoyRouteMode) { convoyRouteClick(e.latlng); return; }
   if (_placingDeployPoint) {
     if (!pointInBoundary(e.latlng.lat, e.latlng.lng)) {
       showToast('Outside game boundary — cannot place here', '#ef5350'); return;
@@ -4392,6 +4565,7 @@ document.getElementById('annotate-btn').addEventListener('click', toggleAnnotate
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     clearTimeout(clickTimer); clickTimer = null;
+    if (convoyRouteMode) { cancelConvoyRoute(); return; }
     if (patrolMode) { cancelPatrol(); return; }
     if (_placingDeployPoint) { _placingDeployPoint = false; document.getElementById('dep-btn').classList.remove('ruler-on'); setStatus(''); return; }
     if (_drawingDeployRoute) { const {previewLine} = _drawingDeployRoute; map.removeLayer(previewLine); _drawingDeployRoute = null; setStatus(''); return; }
@@ -4413,6 +4587,7 @@ document.addEventListener('keydown', (e) => {
     closePanel();
   }
   if (e.key === 'Enter') {
+    if (convoyRouteMode && convoyRoutePoints.length > 2) { finishConvoyRoute(); return; }
     if (patrolMode && patrolPoints.length >= 2) { confirmPatrol(); return; }
     if (_drawingDeployRoute && _drawingDeployRoute.points.length >= 1) { finishDeployRoute(); return; }
     if (searchAreaMode && searchAreaPoints.length >= 3) { finishSearchArea(); return; }
@@ -4566,12 +4741,32 @@ setInterval(() => {
       if (now >= s.arrivesAt) {
         applySupply(m);
       } else if (s.convoyMarker) {
-        const totalMs = segMeters([s.fromLat, s.fromLng], [s.toLat, s.toLng]) / 1000 * SUPPLY_MS_PER_KM;
-        const elapsed = totalMs - (s.arrivesAt - now);
-        const t = Math.min(1, elapsed / totalMs);
-        const lat = s.fromLat + (s.toLat - s.fromLat) * t;
-        const lng = s.fromLng + (s.toLng - s.fromLng) * t;
-        s.convoyMarker.setLatLng([lat, lng]);
+        const _cTotalMs = s.route?.length >= 2
+          ? s.route.reduce((a,p,i)=>i?a+segMeters(s.route[i-1],p):0,0)/1000*SUPPLY_MS_PER_KM
+          : segMeters([s.fromLat,s.fromLng],[s.toLat,s.toLng])/1000*SUPPLY_MS_PER_KM;
+        const elapsed = _cTotalMs - (s.arrivesAt - now);
+        const t = Math.min(1, elapsed / _cTotalMs);
+        if (s.route && s.route.length >= 2) {
+          // Follow planned waypoints
+          const _rTotal = s.route.reduce((a,p,i)=>i?a+segMeters(s.route[i-1],p):0,0);
+          const _rTarget = _rTotal * t;
+          let _cum = 0, _pos = s.route[0];
+          for (let _ri = 1; _ri < s.route.length; _ri++) {
+            const _rs = segMeters(s.route[_ri-1], s.route[_ri]);
+            if (_cum + _rs >= _rTarget) {
+              const _rf = (_rTarget - _cum) / _rs;
+              _pos = [s.route[_ri-1][0]+(s.route[_ri][0]-s.route[_ri-1][0])*_rf,
+                      s.route[_ri-1][1]+(s.route[_ri][1]-s.route[_ri-1][1])*_rf];
+              break;
+            }
+            _cum += _rs; _pos = s.route[_ri];
+          }
+          s.convoyMarker.setLatLng(_pos);
+        } else {
+          const lat = s.fromLat + (s.toLat - s.fromLat) * t;
+          const lng = s.fromLng + (s.toLng - s.fromLng) * t;
+          s.convoyMarker.setLatLng([lat, lng]);
+        }
       }
     }
     // Mavic battery recharge (slow, ~1%/6s when idle)
@@ -4775,6 +4970,11 @@ function startFortify(m, workerIds) {
   const _sfLbl = _sfUrban ? (URBAN_FORT_LABELS[m._fortLevel+1] || FORT_LABELS[m._fortLevel+1]) : FORT_LABELS[m._fortLevel+1];
   showToast(`${_sfUrban?'Fortifying building':'Digging in'}${workerNote} — ${_sfLbl} in ~${etaSec}s game time`, '#ffd54f');
   unitLog(m, `${_sfUrban?'Fortifying building':'Started digging in'}${workerNote}`);
+  // Auto-breach wall when fortifying a building — breach is part of the process
+  if (_sfUrban && !m._wallBreached && m._wallBreachingAt === 0) {
+    m._wallBreachingAt = Date.now() + 120000 / TIME_SCALE;
+    unitLog(m, 'Wall breach initiated (part of building fortification)');
+  }
   renderPanel();
 }
 function stopFortify(m) {
@@ -4865,7 +5065,11 @@ function createMarker(pt, side, count, role = '') {
     m._maxAmmo = m._soldiers.reduce((s, sol) => s + SOLDIER_ROLES[sol.role].ammo, 0);
   }
   else if (role === 'mortar')    { m._maxAmmo = 8; m._ammo = 5 + Math.floor(Math.random() * 4); }
-  else if (role === 'fpv')       { m._drones = 3 + Math.floor(Math.random() * 3); m._maxDrones = FPV_MAX_DRONES; }
+  else if (role === 'fpv') {
+    m._drones = 3 + Math.floor(Math.random() * 3); m._maxDrones = FPV_MAX_DRONES;
+    m._soldiers = [mkSoldier('fpv_pilot',0), mkSoldier('fpv_spotter',1), mkSoldier('fpv_driver',2)];
+    m._count = 3;
+  }
   else if (role === 'artillery') { m._maxAmmo = 5; m._ammo = 3 + Math.floor(Math.random() * 3); }
   allMarkers.push(m);
   m.addTo(map);
@@ -5339,7 +5543,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CDB';
+const VERSION = '2026-08-22-CDE';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -5583,6 +5787,7 @@ function saveState() {
       taskQueue: m._taskQueue?.map(t => ({ latlng: { lat: t.latlng.lat ?? t.latlng[0], lng: t.latlng.lng ?? t.latlng[1] } })) ?? [],
       conds: m._conds ? { ...m._conds } : {},
       patrolRoute: m._patrolRoute ?? null,
+      convoyRoute: m._convoyRoute ?? null,
       fortLevel: m._fortLevel ?? 0,
       fortDamage: m._fortDamage ?? 0,
       supplyType: m._supply?.type ?? null,
@@ -5646,6 +5851,7 @@ function loadSavedState() {
       m._missionRepeat = u.missionRepeat ?? 1;
       m._continuousRecon = u.continuousRecon ?? false;
       m._taskQueue = (u.taskQueue ?? []).map(t => ({ latlng: L.latLng(t.latlng.lat, t.latlng.lng) }));
+      if (u.convoyRoute?.length >= 2) m._convoyRoute = u.convoyRoute;
       // Absolute timestamps — assign directly; expired ones handled by next tick
       if (u.fpvCooldownUntil > 0) m._fpvCooldownUntil = u.fpvCooldownUntil;
       else if (u.fpvCooldownMs > 0) m._fpvCooldownUntil = (savedAt || Date.now()) + u.fpvCooldownMs;
