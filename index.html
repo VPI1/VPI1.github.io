@@ -6708,6 +6708,7 @@ async function main() {
       loadAnnotations();
       fetchWeather();
       swSend({ type: 'PAGE_OPEN' });
+      ensureVehicles();
       initFirebase(); // auto-connect if previously configured
       return;
     }
@@ -6751,6 +6752,25 @@ async function main() {
     }
 
     // Spawn cache — keyed by SPAWN_KEY+GLOBAL_RESET_TS; auto-invalidated on game reset
+    // Idempotent: runs after allMarkers is populated; adds missing vehicles per side
+    function ensureVehicles() {
+      const [_elat, _elng] = CENTER;
+      for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
+        for (const vRole of ['tank','ifv','apc']) {
+          if (allMarkers.some(m => m._side === side && m._role === vRole)) continue;
+          for (let _et = 0; _et < 2000; _et++) {
+            const _ep = [_elat + (Math.random()-0.5)*BBOX_PAD*2,
+                         _elng + (Math.random()-0.5)*BBOX_PAD*2];
+            if (pointInBoundary(_ep[0],_ep[1]) && isNorthOfLine(_ep)===northSide) {
+              createMarker(_ep, side, 1, vRole);
+              console.log('[CDM] ensureVehicles spawned', vRole, side, _ep);
+              break;
+            }
+          }
+        }
+      }
+    }
+
     const _SCKEY = 'spawn_v2_' + SPAWN_KEY + '_' + GLOBAL_RESET_TS;
     let _scData = null;
     try { const _sr = localStorage.getItem(_SCKEY); if (_sr) _scData = JSON.parse(_sr); } catch {}
@@ -7004,6 +7024,7 @@ async function main() {
     document.getElementById('loading').style.display = 'none';
     loadAnnotations();
     fetchWeather();
+    ensureVehicles();
     initFirebase();
 
   } catch (err) {
