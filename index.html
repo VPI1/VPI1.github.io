@@ -3602,11 +3602,11 @@ const DEP_MAX_PER_TYPE = 2; // max TDPs per role per side
 // Realistic spawn intervals — front-line reinforcements arrive slowly.
 // Infantry platoon rebuilt in ~10-15min; vehicles take 30-90min to stage forward.
 const TDP_SPAWN_INTERVAL_MS = {
-  infantry: 10*60*1000, fpv: 15*60*1000, mavic: 20*60*1000,
-  artillery: 60*60*1000, mortar: 30*60*1000,
-  tank: 90*60*1000, ifv: 45*60*1000, apc: 30*60*1000
+  infantry: 20*60*1000, fpv: 30*60*1000, mavic: 40*60*1000,
+  artillery: 120*60*1000, mortar: 60*60*1000,
+  tank: 180*60*1000, ifv: 90*60*1000, apc: 60*60*1000
 };
-const TDP_SPAWN_COUNT = { infantry: 2, fpv: 4, mavic: 1, artillery: 1, mortar: 1,
+const TDP_SPAWN_COUNT = { infantry: 1, fpv: 3, mavic: 3, artillery: 1, mortar: 1,
   tank: 1, ifv: 1, apc: 1 };
 
 function depPointIcon(side, role) {
@@ -4661,6 +4661,10 @@ function rebuildLine(state) {
     const _rlOp = (state.marker._side !== userSide && !_adminAuthed) ? 0 : 0.95;
     state.line = L.polyline(pts, { color: '#ff9500', weight: 3, dashArray: '10 6', opacity: _rlOp }).addTo(map);
   }
+  if (state.line && state.line.getTooltip()) {
+    const _rlEtaSec = etaSeconds(state);
+    state.line.setTooltipContent(fmtDist(_rlEtaSec * WALK_MS) + ' · ETA ' + formatETA(_rlEtaSec));
+  }
 }
 
 function rebuildSplits(state) {
@@ -4784,6 +4788,7 @@ function assignRoute(marker, route) {
   const state = { marker: movingMarker, route, seg: 0, t: 0, line, vertices: [], splits: [] };
   movingMarkers.set(movingMarker, state);
   const totalDist = route.reduce((s,p,i) => i ? s + segMeters(route[i-1], p) : 0, 0);
+  line.bindTooltip(fmtDist(totalDist) + ' · ETA ' + formatETA(totalDist / WALK_MS), { sticky: true, direction: 'top' });
   unitLog(movingMarker, `Route assigned — ${fmtDist(totalDist)} · ${route.length-1} waypoint${route.length>2?'s':''}`);
   rebuildHandles(state);
   movingMarker.dragging.disable();
@@ -5981,9 +5986,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CDI';
+const VERSION = '2026-08-22-CDJ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-08-22-v3'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -6116,8 +6121,9 @@ function tdpSpawn(dp, now) {
     unitLog(atTDP, `+${spawnCount} reinforcement${spawnCount > 1 ? 's' : ''} from TDP`);
     showToast(`TDP: +${spawnCount} ${dp.role} joined (now ${atTDP._count})`, '#66bb6a');
   } else {
-    // Spawn a fresh unit at TDP position
-    const m = createMarker(dpPos, dp.side, spawnCount, dp.role);
+    // Spawn slightly above (north of) TDP so unit icon is clickable
+    const spawnPos = [dpPos[0] + 0.00072, dpPos[1]]; // ~80 m north
+    const m = createMarker(spawnPos, dp.side, spawnCount, dp.role);
     if (dp.moveRoute?.length >= 2) {
       assignRoute(m, dp.moveRoute);
     }
@@ -6943,6 +6949,16 @@ async function main() {
         if (!pt) continue;
         markOccupied(pt, 'fpv', northSide);
         createMarker(pt, side, groupSize('fpv'), 'fpv');
+      }
+    }
+
+    // ── Armored vehicles — 1 tank, 1 IFV, 1 APC per side (mid-rear) ──
+    _ltxt('Armored vehicles… +' + _ts());
+    await new Promise(r => requestAnimationFrame(r));
+    for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
+      for (const vRole of ['tank','ifv','apc']) {
+        const vPt = pickBand(northSide, 3.0, 8.0) ?? pickBand(northSide, 1.5, 10.0);
+        if (vPt) createMarker(vPt, side, 1, vRole);
       }
     }
 
