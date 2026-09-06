@@ -1103,7 +1103,7 @@ function soldierIcon(side, count, role = '') {
 }
 
 // ── globals ───────────────────────────────────────────────────
-let TIME_SCALE = 1;   // controlled by admin speed slider (default 1x real-time)
+let TIME_SCALE = 20;  // controlled by admin speed slider (default 1x real-time)
 Object.defineProperty(window, 'WALK_MS', { get: () => 1.111 * TIME_SCALE, configurable: true });
 
 // ── terrain polygons (populated after OSM load) ───────────────
@@ -2100,13 +2100,16 @@ function findFriendliesInRange(marker, radiusKm, excludeSelf = false) {
     return m._side === marker._side && segMeters(pos, markerPos(m)) <= maxM;
   });
 }
-function etaSeconds(state) {
+function routeDistM(state) {
   const { route, seg, t } = state;
   if (seg >= route.length - 1) return 0;
   let dist = segMeters(route[seg], route[seg+1]) * (1 - t);
   for (let i = seg + 1; i < route.length - 1; i++) dist += segMeters(route[i], route[i+1]);
-  return dist / WALK_MS;
+  return dist;
 }
+const _UNIT_SPD_MULT = { tank: 11.25, ifv: 16.2, apc: 20.0, artillery: 0.5, mortar: 0.65 };
+function unitSpeedMs(m) { return WALK_MS * (_UNIT_SPD_MULT[m?._role] ?? 1); }
+function etaSeconds(state) { return routeDistM(state) / unitSpeedMs(state.marker); }
 function formatETA(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.round(s % 60);
   if (h > 0) return `${h}h ${m}min ${sec}s`;
@@ -2863,6 +2866,7 @@ function _buildStatusTab(m) {
 // ── Battle Damage Assessment (BDA) ───────────────────────────────────────────
 function startBDA(m) {
   if (m._bdaAt) { showToast('BDA already in progress.', '#888'); return; }
+  if (_adminAuthed) { m._bdaAt = 1; m._bdaTerrain = terrainAt(markerPos(m)); completeBDA(m); return; }
   const _pos = markerPos(m);
   const _terrain = terrainAt(_pos);
   // Base duration in seconds (real-time at 1x)
@@ -4078,18 +4082,17 @@ function executeFPVStrike(pilot, target) {
   const etaSec = Math.round(distM / (55 * TIME_SCALE));
   const droneMarker = L.marker(pilot.getLatLng(), { icon: fpvDroneIcon(bearing), zIndexOffset: 300 })
     .addTo(map).bindTooltip(`ETA ${fmtETA(etaSec)}`, { permanent: true, className: 'fpv-eta-tip', direction: 'right', offset: [8,0] });
-  flyingFPVs.push({ droneMarker, pilot, target, lat: fromPos[0], lng: fromPos[1], dstLat: toPos[0], dstLng: toPos[1] });
   unitLog(pilot, `FPV launched → ${ROLES[target._role]?.label ?? 'target'} · ETA ${fmtETA(etaSec)} · ${fmtDist(distM)}`);
   showToast(`FPV drone launched! ETA ${fmtETA(etaSec)}`, '#ffa726');
-  // Push FPV event so teammates/opponents see the drone flying in real-time
+  let _fpvFbKey = null;
   if (_fbDb) {
-    _fbDb.ref('fpv_events').push({
-      clientId: _fbClientId,
-      fromLat: fromPos[0], fromLng: fromPos[1],
-      toLat: toPos[0], toLng: toPos[1],
-      launchedAt: Date.now()
-    }).catch(function() {});
+    const _fpvRef = _fbDb.ref('fpv_events').push({
+      clientId: _fbClientId, fromLat: fromPos[0], fromLng: fromPos[1],
+      toLat: toPos[0], toLng: toPos[1], launchedAt: Date.now()
+    });
+    _fpvRef.catch(function() {}); _fpvFbKey = _fpvRef.key;
   }
+  flyingFPVs.push({ droneMarker, pilot, target, lat: fromPos[0], lng: fromPos[1], dstLat: toPos[0], dstLng: toPos[1], fbEventKey: _fpvFbKey });
 }
 
 // Step 4: drone arrives → apply casualties
@@ -4552,6 +4555,7 @@ setInterval(() => {
   for (let i = flyingFPVs.length - 1; i >= 0; i--) {
     const d = flyingFPVs[i];
     const step = FPV_SPD * 0.1;
+    if (d.target && allMarkers.includes(d.target)) { const _tp = markerPos(d.target); d.dstLat = _tp[0]; d.dstLng = _tp[1]; }
     const dist = segMeters([d.lat, d.lng], [d.dstLat, d.dstLng]);
 
     // Infantry intercept check — once per second (every 10 ticks)
@@ -4570,7 +4574,10 @@ setInterval(() => {
         if (!d.remote) {
           if (d.target) applyFPVImpact(d.pilot, d.target, true);
           else { unitLog(d.pilot, 'FPV point-strike drone shot down'); showToast('FPV drone shot down!', '#ffa726'); }
-        } else showToast('FPV drone shot down!', '#ffa726');
+        } else {
+          showToast('FPV drone shot down!', '#ffa726');
+          if (_fbDb && d.fbEventKey) { _fbDb.ref('fpv_shotdown/' + d.fbEventKey).set({ ts: Date.now() }).catch(function() {}); }
+        }
         continue;
       }
     }
@@ -4664,7 +4671,7 @@ function rebuildLine(state) {
   }
   if (state.line && state.line.getTooltip()) {
     const _rlEtaSec = etaSeconds(state);
-    state.line.setTooltipContent(fmtDist(_rlEtaSec * WALK_MS) + ' · ETA ' + formatETA(_rlEtaSec));
+    state.line.setTooltipContent(fmtDist(routeDistM(state)) + ' · ETA ' + formatETA(_rlEtaSec));
   }
 }
 
@@ -4789,7 +4796,7 @@ function assignRoute(marker, route) {
   const state = { marker: movingMarker, route, seg: 0, t: 0, line, vertices: [], splits: [] };
   movingMarkers.set(movingMarker, state);
   const totalDist = route.reduce((s,p,i) => i ? s + segMeters(route[i-1], p) : 0, 0);
-  line.bindTooltip(fmtDist(totalDist) + ' · ETA ' + formatETA(totalDist / WALK_MS), { sticky: true, direction: 'top' });
+  line.bindTooltip(fmtDist(totalDist) + ' · ETA ' + formatETA(totalDist / unitSpeedMs(movingMarker)), { sticky: true, direction: 'top' });
   unitLog(movingMarker, `Route assigned — ${fmtDist(totalDist)} · ${route.length-1} waypoint${route.length>2?'s':''}`);
   rebuildHandles(state);
   movingMarker.dragging.disable();
@@ -5665,7 +5672,15 @@ function initFirebase() {
         var droneMarker = L.marker([d.fromLat, d.fromLng], { icon: fpvDroneIcon(bearing), zIndexOffset: 300 })
           .addTo(map).bindTooltip('FPV incoming!', { permanent: true, className: 'fpv-eta-tip', direction: 'right', offset: [8,0] });
         flyingFPVs.push({ droneMarker: droneMarker, pilot: null, target: null,
-          lat: d.fromLat, lng: d.fromLng, dstLat: d.toLat, dstLng: d.toLng, remote: true });
+          lat: d.fromLat, lng: d.fromLng, dstLat: d.toLat, dstLng: d.toLng, remote: true, fbEventKey: snap.key });
+      });
+      _fbDb.ref('fpv_shotdown').on('child_added', function(snap) {
+        var _sdIdx = flyingFPVs.findIndex(function(f) { return f.fbEventKey === snap.key; });
+        if (_sdIdx >= 0) {
+          map.removeLayer(flyingFPVs[_sdIdx].droneMarker);
+          flyingFPVs.splice(_sdIdx, 1);
+          showToast('FPV drone shot down by enemy!', '#ef5350');
+        }
       });
 
       // Heartbeat every 2s — first push is deferred until the initial Firebase
@@ -5755,8 +5770,8 @@ function fbApplySideSnapshot(side, all) {
 function fbApplyUnit(d) {
   var existing = allMarkers.find(function(m) { return m._uid === d.uid; });
   if (existing) {
-    // Skip echo (own update reflected back) — only for units already on map
-    if (!_adminAuthed && d.clientId === _fbClientId) return;
+    // Skip echo (own update reflected back) — own writes already applied locally
+    if (d.clientId === _fbClientId) return;
     if (d.route && d.route.length >= 2) {
       if (movingMarkers.has(existing)) {
         var old = movingMarkers.get(existing);
@@ -5987,7 +6002,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDN';
+const VERSION = '2026-09-06-CDO';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
