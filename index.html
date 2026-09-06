@@ -331,7 +331,7 @@ function loadFirebaseSDK(cb) {
 <div id="dep-picker"></div>
 <div id="version-badge" style="position:fixed;bottom:14px;left:14px;z-index:9000;font-family:monospace;font-size:10px;color:#8090a8;pointer-events:none"></div>
 <div id="search-bar">
-  <input id="search-input" placeholder="Filter: infantry, mavic, fpv, blue, red…" oninput="filterUnits(this.value)" />
+  <input id="search-input" placeholder="Filter: infantry, tank, ifv, apc, mavic, fpv, blue, red…" oninput="filterUnits(this.value)" />
   <span id="search-count"></span>
   <button class="ann-btn" onclick="clearUnitFilter()" style="padding:3px 7px;font-size:11px">✕</button>
 </div>
@@ -5989,7 +5989,7 @@ function openFBConfig() {
 
 const VERSION = '2026-08-22-CDJ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-08-22-v5'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -6955,10 +6955,21 @@ async function main() {
 
     Math.random = _origMathRand;
 
-    // ── Armored vehicles — spawned with real random (seeded RNG exhausted by this point) ──
+    // ── Armored vehicles — spawned with real random after seeded section ──
     for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
       for (const vRole of ['tank','ifv','apc']) {
-        const vPt = pickSpotSep(northSide, vRole) ?? pickBand(northSide, 0.5, 3.0);
+        // Try terrain-polygon spawn first, then fall back to raw bbox sample
+        // (pickBand fails here because infantry-separation blocks the tight zone)
+        let vPt = pickSpotSep(northSide, vRole);
+        if (!vPt) {
+          const [_vlat, _vlng] = CENTER;
+          for (let _vt = 0; _vt < 600 && !vPt; _vt++) {
+            const _p = [_vlat + (Math.random() - 0.5) * BBOX_PAD * 2,
+                        _vlng + (Math.random() - 0.5) * BBOX_PAD * 2];
+            if (pointInBoundary(_p[0], _p[1]) && isNorthOfLine(_p) === northSide
+                && !occupied.some(o => dist2(_p, o) < 0.000004)) vPt = _p;
+          }
+        }
         if (vPt) { markOccupied(vPt, vRole, northSide); createMarker(vPt, side, 1, vRole); }
       }
     }
