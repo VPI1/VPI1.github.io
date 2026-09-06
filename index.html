@@ -2437,7 +2437,8 @@ function _buildActTab(m, now, moving) {
       const cSA = Math.round((FORT_COVER.smallArms[fl]??0)*100);
       const cArt = Math.round((FORT_COVER.artillery[fl]??0)*100);
       const cFPV = Math.round((FORT_COVER.fpv[fl]??0)*100);
-      const coverStr = fl > 0 ? ` · SA ${cSA}% / Art ${cArt}% / FPV ${cFPV}%` : '';
+      const cDet = Math.round((FORT_COVER.detection[fl]??0)*100);
+      const coverStr = fl > 0 ? ` · SA ${cSA}% / Art ${cArt}% / FPV ${cFPV}% / Camo ${cDet}%` : '';
       const _uFt = terrainAt(markerPos(m)) === 'urban';
       const _uFortLbl = _uFt ? (URBAN_FORT_LABELS[fl] || 'None') : fn;
       h += `<div class="pb-note">Level ${fl}/${FORT_MAX} · ${_uFortLbl}${coverStr}</div>`;
@@ -2687,12 +2688,25 @@ function _buildStatusTab(m) {
     const _ter = terrainAt(_mPt);
     const _inBldg = _ter === 'urban' && typeof _URBAN_POLYS !== 'undefined' &&
                     _URBAN_POLYS.some(r => pointInPolygon(_mPt, r));
-    const _posLabel = _inBldg         ? 'In building — natural cover' :
-                      _ter === 'urban'  ? 'Urban area — partial cover' :
-                      _ter === 'forest' ? 'In treeline — concealment' :
-                      'None — in open';
+    const _posLabel = _inBldg         ? 'In building' :
+                      _ter === 'urban'  ? 'Urban area' :
+                      _ter === 'forest' ? 'Treeline' :
+                      'Open field';
     const _posColor = _ter === 'field' ? '#ef5350' : '#ffd54f';
-    h += _statusRow('⬡', 'Position', _posLabel, _posColor);
+    h += _statusRow('⬡', 'Position', `${_posLabel} · No fortification`, _posColor);
+    // Show terrain-based inherent protection even without fortification
+    const _saTerrBonus = _ter === 'forest' ? 15 : _ter === 'urban' ? 20 : 0;
+    const _fpvTerrMiss = _ter === 'forest' ? 42 : _ter === 'urban' ? 22 : 0;
+    const _detTerrHide = _ter === 'forest' ? 78 : _ter === 'urban' ? 52 : 0;
+    if (_ter !== 'field') {
+      h += _statusRow('🛡', 'vs Small Arms', `~${_saTerrBonus}% terrain cover`, '#ffd54f');
+      h += _statusRow('🚀', 'vs FPV', `${_fpvTerrMiss}% miss chance (terrain)`, '#ffd54f');
+      h += _statusRow('👁', 'vs Detection', `${_detTerrHide}% hidden (terrain)`, '#ffd54f');
+      h += _statusRow('⚠', 'Fortification', 'None — vulnerable to artillery', '#ef5350');
+    } else {
+      h += _statusRow('⚠', 'Cover', 'NONE — fully exposed', '#ef5350');
+      h += _statusRow('🚀', 'vs FPV', 'No miss bonus — critical exposure', '#ef5350');
+    }
   }
 
   // ── Visibility ──────────────────────────────────────────────
@@ -3240,9 +3254,15 @@ function fightTick(attacker, defender) {
     : aliveSoldiers(attacker);
   const defAlive = aliveSoldiers(defender);
   const fortBonus = FORT_COVER.smallArms[defender._fortLevel ?? 0] ?? 0;
-  // Symmetric base hit rates — attacker has no inherent advantage
-  const atkHit = accuracy * (atkSup ? 0.4 : 1.0) * (1 - fortBonus);
-  const defHit = accuracy * (defSup ? 0.28 : 1.0); // defender equally capable; fortBonus already reduces dCas
+  // Surprise modifier: first 2 ticks attacker has uncontested firing with no return fire adjustment
+  // Attacker gets ~2x hit rate; defender caught scrambling (longer reaction + reduced fire)
+  const _surpriseTick = fight?.surprise && fight.tickSeed <= 2;
+  if (_surpriseTick && fight.tickSeed === 3) fight.surprise = false; // expire after 2 ticks
+  const _surpriseMod = _surpriseTick ? 2.0 : 1.0;
+  const _defSurprisePen = _surpriseTick ? 0.35 : 1.0; // defender fires at 35% if still scrambling
+  // Symmetric base hit rates — attacker advantage only from surprise or terrain
+  const atkHit = accuracy * (atkSup ? 0.4 : 1.0) * (1 - fortBonus) * _surpriseMod;
+  const defHit = accuracy * (defSup ? 0.28 : 1.0) * _defSurprisePen; // defender equally capable; fortBonus already reduces dCas
 
   if (atkAlive.length) {
     for (const s of atkAlive) { if (s.ammo > 0 && _rng() < atkHit * 0.20) dCas++; }
@@ -3287,12 +3307,24 @@ function fightTick(attacker, defender) {
 function startFight(attacker, defender) {
   if (activeFights.has(attacker)) return;
   const distM = segMeters(markerPos(attacker), markerPos(defender));
-  // Defender takes 1-3 real seconds to react depending on distance
-  const reactionMs = (1000 + (distM / unitRangeM(defender)) * 2000);
-  unitLog(attacker, `Firefight started vs ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m`);
-  unitLog(defender, `Taking fire from ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — reacting…`);
+  const now_sf = Date.now();
+  // Surprise: attacker has not been detected by the defender (not currently spotted)
+  // Undetected unit initiating fire = ambush / surprise attack
+  const _isSurprise = (attacker._spottedUntil ?? 0) <= now_sf;
+  // Longer reaction delay if surprised — defender must locate threat, process, return fire
+  const _surpriseReactionBonus = _isSurprise ? Math.max(3000, distM * 8) : 0;
+  const reactionMs = (1000 + (distM / unitRangeM(defender)) * 2000) + _surpriseReactionBonus / TIME_SCALE;
+  if (_isSurprise) {
+    unitLog(attacker, `SURPRISE ATTACK on ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — undetected opening fire`);
+    unitLog(defender, `AMBUSHED by ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — not detected, scrambling…`);
+    if (attacker._side === userSide) showToast('Surprise attack! First shots undetected — bonus accuracy', '#81c784');
+    else showToast('AMBUSHED! Enemy attacked from concealment!', '#ef5350');
+  } else {
+    unitLog(attacker, `Firefight started vs ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m`);
+    unitLog(defender, `Taking fire from ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — reacting…`);
+  }
   const intervalId = setInterval(() => fightTick(attacker, defender), 8000 / TIME_SCALE);
-  activeFights.set(attacker, { defender, intervalId, respondAt: Date.now() + reactionMs, tickSeed: 0, startedAt: Math.floor(Date.now() / 1000) });
+  activeFights.set(attacker, { defender, intervalId, respondAt: now_sf + reactionMs, tickSeed: 0, startedAt: Math.floor(now_sf / 1000), surprise: _isSurprise });
   fightTick(attacker, defender); // attacker fires first; defender not yet responding
   setTimeout(() => {
     unitLog(defender, `Returning fire on ${ROLES[attacker._role]?.label ?? 'enemy'}`);
@@ -3990,17 +4022,37 @@ function applyFPVImpact(pilot, target, intercepted) {
   const impactLatlng = L.latLng(impactPos[0], impactPos[1]);
   showExplosion(impactLatlng, 70);
   showCrater(impactLatlng, 'fpv');
-  if (Math.random() < 0.12) {
-    unitLog(pilot, 'FPV missed — drone exploded near target, no casualties');
+  const _fpvTerrain = terrainAt(markerPos(target));
+  const _fpvFl = target._fortLevel ?? 0;
+  // Terrain degrades operator's ability to see and guide the drone precisely.
+  // Forest: foliage blocks LOS, operator must thread canopy — very hard.
+  // Urban: angles constrained by walls, windows — moderately hard.
+  // Open field: operator has clear view from altitude — easy.
+  const _fpvTerrainMiss = _fpvTerrain === 'forest'
+    ? 0.42 + (_fpvFl >= 3 ? 0.08 : _fpvFl >= 1 ? 0.04 : 0) // dug-in forest = even harder
+    : _fpvTerrain === 'urban' ? 0.22
+    : 0;
+  const _fpvTotalMiss = 0.12 + _fpvTerrainMiss; // base guidance error + terrain difficulty
+  if (Math.random() < _fpvTotalMiss) {
+    const _missReason = _fpvTerrain === 'forest' ? 'foliage/canopy deflected' : _fpvTerrain === 'urban' ? 'building geometry deflected' : 'guidance error';
+    unitLog(pilot, `FPV missed — ${_missReason}, no casualties`);
     if (allMarkers.includes(pilot)) renderPanel();
     return;
   }
   // FPV always does structural damage even if crew is protected
   if (target._fortLevel > 0) damageFortification(target, 0, 15, 'fpv');
-  const fpvCover = FORT_COVER.fpv[target._fortLevel ?? 0] ?? 0;
+  // Urban fortifications provide greater physical protection than open-field positions
+  // (concrete walls, rubble, room geometry absorbs blast differently)
+  const _fpvUrbanCover = [0, 0.14, 0.30, 0.45, 0.60, 0.74, 0.87];
+  const fpvCover = _fpvTerrain === 'urban'
+    ? (_fpvUrbanCover[_fpvFl] ?? 0)
+    : FORT_COVER.fpv[_fpvFl] ?? 0;
   if (Math.random() < fpvCover) {
-    unitLog(pilot, `FPV hit — absorbed by ${FORT_LABELS[target._fortLevel ?? 0] || 'cover'}`);
-    unitLog(target, `FPV impact absorbed by fortification`);
+    const _coverLbl = _fpvTerrain === 'urban'
+      ? (URBAN_FORT_LABELS[_fpvFl] || 'building structure')
+      : (FORT_LABELS[_fpvFl] || 'cover');
+    unitLog(pilot, `FPV hit — absorbed by ${_coverLbl}`);
+    unitLog(target, `FPV impact absorbed by ${_coverLbl}`);
     if (allMarkers.includes(pilot)) renderPanel();
     return;
   }
@@ -5084,11 +5136,12 @@ const URBAN_FORT_LABELS = ['', 'Sandbag entry', 'Barricade', 'Door loophole', 'W
 const FORT_COVER = {
   smallArms: [0, 0.55, 0.72, 0.80, 0.84, 0.88, 0.92],
   artillery:  [0, 0.00, 0.04, 0.22, 0.45, 0.65, 0.82],
-  fpv:        [0, 0.00, 0.04, 0.18, 0.32, 0.50, 0.68],
+  fpv:        [0, 0.04, 0.10, 0.22, 0.38, 0.55, 0.72],
   detection:  [0, 0.05, 0.12, 0.22, 0.38, 0.55, 0.72],
 };
 // Thresholds in game-seconds for each level (real ms = game_s * 1000 / TIME_SCALE)
-const FORT_GAME_S = [0, 30, 180, 600, 1800, 5400, 14400];
+const FORT_GAME_S = [0, 900, 5400, 21600, 86400, 259200, 864000];
+// At 1x TIME_SCALE: L1=15min, L2=90min, L3=6hr, L4=24hr, L5=3days, L6=10days
 const FORT_MAX = FORT_LABELS.length - 1;
 
 function processFortifications(now) {
@@ -5741,7 +5794,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CDF';
+const VERSION = '2026-08-22-CDG';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
