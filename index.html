@@ -991,9 +991,17 @@ const URBAN_VIS_M = [70, 60, 55, 45, 35, 30, 25];
 
 function unitRangeM(m) {
   const base = 400;
+  // Armored vehicles: thermal optics + gun sights give excellent detection range
+  // regardless of terrain (thermals see through foliage, smoke, darkness)
+  const _vRange = { tank: 1500, ifv: 1000, apc: 800 };
+  if (_vRange[m._role] != null) return _vRange[m._role];
   if (m._role !== 'infantry' && m._role !== 'mortar') return base;
   const fl = m._fortLevel ?? 0;
   const pos = markerPos(m);
+  // Moving soldiers are actively scanning — full situational awareness
+  if (movingMarkers.has(m)) return base;
+  // Active visual recon extends detection temporarily (periscope peek, controlled observation)
+  if ((m._reconEndsAt ?? 0) > Date.now()) return 300;
   const terrain = terrainAt(pos);
   const hasMavicCover = allMarkers.some(mk => {
     if (mk._side !== m._side || mk._role !== 'mavic') return false;
@@ -1002,18 +1010,12 @@ function unitRangeM(m) {
   });
   if (hasMavicCover) return base;
   // Urban (building): walls dominate over fortification level.
-  // Even unfortified, a unit inside a building can only see through windows/doors.
   if (terrain === 'urban') {
     return Math.max(25, URBAN_VIS_M[fl] ?? 25);
   }
   // Open field or forest at no fortification: full situational awareness.
-  // Forest provides slight concealment from range and has visual obstructions but
-  // soldiers still have good awareness — they can hear, see gaps, etc.
   if (fl === 0) return terrain === 'forest' ? 350 : base;
-  // Dug-in positions: dramatically restrict what the soldier can see.
-  // Level 1-2 (scrape/position): head is near ground level, some awareness.
-  // Level 3+ (trench/bunker): head is below ground, sight is through periscope or
-  // carefully raising above the parapet — severely limited.
+  // Dug-in: dramatically restrict what the soldier can see.
   const _visMin = fl >= 3 ? 30 : 50;
   const _fieldBase = terrain === 'forest' ? 350 : base;
   return Math.max(_visMin, Math.round(_fieldBase * (FORT_VIS_FACTOR[fl] ?? 0.07)));
@@ -1036,22 +1038,47 @@ function unitHasGrenadier(m) { return false; }
 
 // ── unit roles ─────────────────────────────────────────────────
 const ROLES = {
-  infantry:  { label: 'Infantry',    minKm: 0,   maxKm: 1.5  },
-  mortar:    { label: 'Mortar',      minKm: 0.5, maxKm: 4    },
-  mavic:     { label: 'Mavic Drone', minKm: 3,   maxKm: 6    },
-  fpv:       { label: 'FPV Pilot',   minKm: 1,   maxKm: 5    },
-  artillery: { label: 'Artillery',   minKm: 6,   maxKm: 15   },
+  infantry:  { label: 'Infantry',    minKm: 0,    maxKm: 1.5  },
+  mortar:    { label: 'Mortar',      minKm: 0.5,  maxKm: 4    },
+  mavic:     { label: 'Mavic Drone', minKm: 3,    maxKm: 6    },
+  fpv:       { label: 'FPV Pilot',   minKm: 1,    maxKm: 5    },
+  artillery: { label: 'Artillery',   minKm: 6,    maxKm: 15   },
+  // Armored vehicles — Ukraine/Russia as of 2025
+  // Tank: T-72B3/T-80BVM (RU) · T-64BV/T-72AMT (UA) — 125mm main gun, ERA+composite armor
+  tank:      { label: 'Tank',        minKm: 0.1,  maxKm: 2.0  },
+  // IFV: BMP-2/BMP-3 (RU/UA) — 30mm autocannon, aluminium hull, 3 crew + 7 dismounts
+  ifv:       { label: 'IFV (BMP)',   minKm: 0.1,  maxKm: 1.5  },
+  // APC: BTR-82A/BTR-80 (RU/UA) — 30mm/14.5mm, steel hull, 3 crew + 7 dismounts
+  apc:       { label: 'APC (BTR)',   minKm: 0.1,  maxKm: 1.2  },
 };
 const kmToDeg = km => km / 111.32;
 
 // Per-role symbol and accent color for quick visual recognition
-const ROLE_SYMBOLS = { infantry:'⊕', mavic:'◈', fpv:'▲', mortar:'⬡', artillery:'★' };
+const ROLE_SYMBOLS = { infantry:'⊕', mavic:'◈', fpv:'▲', mortar:'⬡', artillery:'★',
+  tank:'⊞', ifv:'⊟', apc:'⊠' };
 const ROLE_ACCENT  = {
   infantry: { blue:'#64b0f7', red:'#ef7070' },
   mavic:    { blue:'#26c6da', red:'#26c6da' },
   fpv:      { blue:'#ef5350', red:'#ffa726' },
   mortar:   { blue:'#ffd54f', red:'#ffd54f' },
   artillery:{ blue:'#ff9800', red:'#ff9800' },
+  tank:     { blue:'#90a4ae', red:'#b0bec5' },  // steel blue-gray
+  ifv:      { blue:'#a5d6a7', red:'#c8e6c9' },  // army green
+  apc:      { blue:'#bcaaa4', red:'#d7ccc8' },  // sand/khaki
+};
+// Armor protection fractions for armored vehicles:
+// ERA + composite (tank), aluminium hull (IFV), steel hull (APC).
+// SA: small arms; FPV: anti-armour drone; Art: artillery/mortar direct hit
+const VEHICLE_ARMOR = {
+  tank: { sa: 0.95, fpv: 0.75, art: 0.55,
+          gun: '125mm 2A46M + 7.62mm coax', speed_kmh: 45, crew: 3, passengers: 0,
+          desc: 'ERA + composite armour (T-72B3/T-80BVM/T-64BV)' },
+  ifv:  { sa: 0.75, fpv: 0.50, art: 0.30,
+          gun: '30mm 2A42 autocannon + 7.62mm coax', speed_kmh: 65, crew: 3, passengers: 7,
+          desc: 'RHA aluminium hull (BMP-2/BMP-3)' },
+  apc:  { sa: 0.60, fpv: 0.35, art: 0.20,
+          gun: '30mm 2A72 / 14.5mm KPV', speed_kmh: 80, crew: 3, passengers: 7,
+          desc: 'Steel hull (BTR-82A/BTR-80)' },
 };
 
 function soldierIcon(side, count, role = '') {
@@ -2237,7 +2264,7 @@ function clearPanelRange() {
 
 // Primary (effective) range shown as inner filled circle
 function unitDisplayRangeKm(m) {
-  if (m._role === 'infantry')  return unitRangeM(m) / 1000;
+  if (m._role === 'infantry' || m._role === 'tank' || m._role === 'ifv' || m._role === 'apc')  return unitRangeM(m) / 1000;
   if (m._role === 'mortar')    return (m._artMaxRangeM ?? 4000) / 1000;
   if (m._role === 'fpv')       return FPV_RADIO_HORIZON_M / 1000;
   if (m._role === 'artillery') return (m._artMaxRangeM ?? 25000) / 1000;
@@ -2261,7 +2288,7 @@ function showPanelRange(m) {
   clearPanelRange();
   const rangeKm = unitDisplayRangeKm(m);
   const maxKm   = unitMaxRangeKm(m);
-  const roleColors = { infantry:'#42a5f5', fpv:'#ff5252', artillery:'#ff9800', mortar:'#ffd54f', mavic:'#00e5ff' };
+  const roleColors = { infantry:'#42a5f5', fpv:'#ff5252', artillery:'#ff9800', mortar:'#ffd54f', mavic:'#00e5ff', tank:'#90a4ae', ifv:'#a5d6a7', apc:'#bcaaa4' };
   const color = roleColors[m._role] ?? '#fff';
   // Inner effective-range circle — solid, clearly visible
   if (rangeKm) {
@@ -2436,6 +2463,21 @@ function _buildActTab(m, now, moving) {
     const holdOn = m._conds?.holdPos;
     h += _pb(holdOn ? 'Release Hold Position' : 'Hold Position', '⬙', holdOn?'on':'tac', "_pa('hold-toggle')");
     h += `<div class="psec">Intelligence</div>`;
+    // Visual recon — only offered when the unit has severely limited situational awareness
+    // (deep trench fl≥3, or inside a building) and is not already in a firefight.
+    // In a firefight the defender spots the attacker automatically from muzzle flash/sound.
+    const _reconTerrain = terrainAt(markerPos(m));
+    const _lowAware = (fl >= 3 || _reconTerrain === 'urban') && !movingMarkers.has(m);
+    if (_lowAware && !inFight && !_incomingFight) {
+      if ((m._reconEndsAt ?? 0) > now) {
+        const _recRem = Math.ceil((m._reconEndsAt - now) / 1000);
+        h += _pb(`Recon in progress — scanning (${_recRem}s) · 300m range`, '👁', 'on', '', true);
+      } else {
+        h += _pb('Conduct Visual Recon · 30s scan (300m)', '👁', 'tac', "_pa('recon-start')");
+      }
+    } else if (inFight || _incomingFight) {
+      h += `<div class="pb-note" style="color:#81c784">👁 Attacker position known (muzzle flash/sound)</div>`;
+    }
     if (m._bdaAt) {
       const _bRem = Math.max(0, Math.ceil((m._bdaAt - now) / 1000));
       h += _pb(`BDA in progress — ${fmtETA(_bRem)}`, '🔍', 'on', '', true);
@@ -2476,6 +2518,16 @@ function _buildActTab(m, now, moving) {
     }
   }
 
+  // Armored vehicle panel section
+  if (VEHICLE_ARMOR[m._role]) {
+    const _va = VEHICLE_ARMOR[m._role];
+    h += `<div class="psec">Vehicle · ${ROLES[m._role]?.label ?? m._role}</div>`;
+    h += `<div class="pb-note">${_va.gun}</div>`;
+    h += `<div class="pb-note">Crew: ${_va.crew}${_va.passengers > 0 ? ` · Dismount capacity: ${_va.passengers}` : ''}</div>`;
+    h += `<div class="pb-note">SA: ${Math.round(_va.sa*100)}% · FPV: ${Math.round(_va.fpv*100)}% · Art: ${Math.round(_va.art*100)}% protection</div>`;
+    h += `<div class="pb-note" style="color:#90a4ae;font-size:10px">${_va.desc} · Road speed ${_va.speed_kmh} km/h</div>`;
+    h += `<div class="pb-note" style="color:#aaa;font-size:10px">Thermal optics — ${unitRangeM(m)}m detection range</div>`;
+  }
   if (m._role === 'fpv') {
     h += `<div class="psec">Strike</div>`;
     if (m._fpvReadyAt > 0 && now < m._fpvReadyAt)
@@ -2735,6 +2787,12 @@ function _buildStatusTab(m) {
   h += `<div class="psec">Visibility</div>`;
   const baseRange = 400;
   const curRange = unitRangeM(m);
+  if (VEHICLE_ARMOR[m._role]) {
+    const _vRange = unitRangeM(m);
+    h += _statusRow('🔭', 'Thermal sight', `${_vRange}m detection range`, '#90a4ae');
+    h += _statusRow('🛡', 'Armour', `SA ${Math.round(VEHICLE_ARMOR[m._role].sa*100)}% · FPV ${Math.round(VEHICLE_ARMOR[m._role].fpv*100)}% · Art ${Math.round(VEHICLE_ARMOR[m._role].art*100)}%`, '#81c784');
+    h += _statusRow('⚡', 'Speed', `${VEHICLE_ARMOR[m._role].speed_kmh} km/h road`, '#ffd54f');
+  }
   if (m._role === 'infantry' || m._role === 'mortar') {
     const _visTerrain = terrainAt(markerPos(m));
     const _visRestricted = fl >= 2 || _visTerrain === 'urban';
@@ -3048,6 +3106,12 @@ window._pa = function(action) {
     unitLog(m, m._conds.holdPos ? 'Holding position' : 'Resuming normal orders');
     renderPanel();
   }
+  else if (action === 'recon-start')  {
+    m._reconEndsAt = Date.now() + 30000 / TIME_SCALE;
+    unitLog(m, 'Visual recon initiated — soldiers carefully scanning surroundings (30s)');
+    showToast('Visual recon started — 30 second observation scan, 300m range', '#81c784');
+    renderPanel();
+  }
   else if (action === 'fort-start')   { startFortify(m); }
   else if (action === 'fort-stop')    { stopFortify(m); }
   else if (action === 'fort-breach')  { startWallBreach(m); }
@@ -3346,14 +3410,19 @@ function startFight(attacker, defender) {
   // Longer reaction delay if surprised — defender must locate threat, process, return fire
   const _surpriseReactionBonus = _isSurprise ? Math.max(3000, distM * 8) : 0;
   const reactionMs = (1000 + (distM / unitRangeM(defender)) * 2000) + _surpriseReactionBonus / TIME_SCALE;
+  // When fire starts the defender instantly locates the attacker from muzzle flash + sound signature.
+  // Even units in deep trenches / buildings know WHERE fire is coming from — smoke, report, concussion.
+  // This reveals the attacker to the defender so they can return fire.
+  attacker._spottedUntil = Math.max(attacker._spottedUntil ?? 0, now_sf + 300000 / TIME_SCALE);
+  if (!attacker._lastKnownPos) attacker._lastKnownPos = markerPos(attacker);
   if (_isSurprise) {
     unitLog(attacker, `SURPRISE ATTACK on ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — undetected opening fire`);
-    unitLog(defender, `AMBUSHED by ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — not detected, scrambling…`);
+    unitLog(defender, `AMBUSHED by ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — not detected, scrambling… (attacker spotted from muzzle flash)`);
     if (attacker._side === userSide) showToast('Surprise attack! First shots undetected — bonus accuracy', '#81c784');
     else showToast('AMBUSHED! Enemy attacked from concealment!', '#ef5350');
   } else {
     unitLog(attacker, `Firefight started vs ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m`);
-    unitLog(defender, `Taking fire from ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — reacting…`);
+    unitLog(defender, `Taking fire from ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — attacker spotted`);
   }
   const intervalId = setInterval(() => fightTick(attacker, defender), 8000 / TIME_SCALE);
   activeFights.set(attacker, { defender, intervalId, respondAt: now_sf + reactionMs, tickSeed: 0, startedAt: Math.floor(now_sf / 1000), surprise: _isSurprise });
@@ -3524,13 +3593,21 @@ let _placingDeployPoint = false;
 let _pendingDeployRole = 'infantry';
 let _drawingDeployRoute = null; // { dp, points:[], previewLine:null }
 
-const DEP_ROLE_COLORS = { infantry:'#66bb6a', fpv:'#ffa726', mavic:'#26c6da', artillery:'#ef5350', mortar:'#ab47bc', all:'#42a5f5' };
-const DEP_ROLE_LABELS = { infantry:'Inf', fpv:'FPV', mavic:'Mav', artillery:'Art', mortar:'Mor', all:'All' };
+const DEP_ROLE_COLORS = { infantry:'#66bb6a', fpv:'#ffa726', mavic:'#26c6da', artillery:'#ef5350', mortar:'#ab47bc', all:'#42a5f5',
+  tank:'#90a4ae', ifv:'#a5d6a7', apc:'#bcaaa4' };
+const DEP_ROLE_LABELS = { infantry:'Inf', fpv:'FPV', mavic:'Mav', artillery:'Art', mortar:'Mor', all:'All',
+  tank:'TNK', ifv:'IFV', apc:'APC' };
 const DEP_MAX_PER_TYPE = 2; // max TDPs per role per side
 
-// Real-world ms between auto-spawns, and how many soldiers spawn each time
-const TDP_SPAWN_INTERVAL_MS = { infantry: 2*60*1000, fpv: 5*60*1000, mavic: 5*60*1000, artillery: 10*60*1000, mortar: 7*60*1000 };
-const TDP_SPAWN_COUNT       = { infantry: 2, fpv: 4, mavic: 1, artillery: 1, mortar: 1 };
+// Realistic spawn intervals — front-line reinforcements arrive slowly.
+// Infantry platoon rebuilt in ~10-15min; vehicles take 30-90min to stage forward.
+const TDP_SPAWN_INTERVAL_MS = {
+  infantry: 10*60*1000, fpv: 15*60*1000, mavic: 20*60*1000,
+  artillery: 60*60*1000, mortar: 30*60*1000,
+  tank: 90*60*1000, ifv: 45*60*1000, apc: 30*60*1000
+};
+const TDP_SPAWN_COUNT = { infantry: 2, fpv: 4, mavic: 1, artillery: 1, mortar: 1,
+  tank: 1, ifv: 1, apc: 1 };
 
 function depPointIcon(side, role) {
   const col = DEP_ROLE_COLORS[role] ?? (side === 'blue' ? '#42a5f5' : '#ef5350');
@@ -3687,7 +3764,7 @@ function enterPlaceDeployPoint() {
     return;
   }
   // Rebuild buttons with live counts
-  const roles = ['infantry','fpv','mavic','artillery','mortar'];
+  const roles = ['infantry','fpv','mavic','artillery','mortar','tank','ifv','apc'];
   picker.innerHTML = '<div style="width:100%;color:#556;font-size:10px;padding-bottom:4px;letter-spacing:.4px">DEPLOY POINT FOR:</div>';
   for (const role of roles) {
     const cur = deploymentPoints.filter(d => d.side === userSide && d.role === role).length;
@@ -4054,6 +4131,27 @@ function applyFPVImpact(pilot, target, intercepted) {
   const impactLatlng = L.latLng(impactPos[0], impactPos[1]);
   showExplosion(impactLatlng, 70);
   showCrater(impactLatlng, 'fpv');
+  // Armored vehicle — check ERA / armour deflection before terrain/fort checks.
+  // A FPV (typical ~1kg shaped charge) can defeat ERA with luck; penetrating hit = crew KIA.
+  // Russia/Ukraine FPVs: modified DJI quads with PG-7 or RKG-3 grenades.
+  // Tank: ERA deflects ~75% of FPV hits (dual ERA + cage armour).
+  // IFV: 50% protection (BMP ERA upgrade, K-4 appliqué armour).
+  // APC: 35% (add-on slat / cage only).
+  if (VEHICLE_ARMOR[target._role] != null) {
+    const _va = VEHICLE_ARMOR[target._role];
+    if (Math.random() < _va.fpv) {
+      unitLog(pilot, `FPV hit — ERA/armour deflected (${target._role.toUpperCase()}), no crew casualties`);
+      unitLog(target, `FPV deflected by ${_va.desc.split('(')[0].trim()} — crew safe`);
+      if (allMarkers.includes(pilot)) renderPanel();
+      return;
+    }
+    // Penetrating hit — catastrophic crew kill
+    const _killed = Math.ceil(target._count * (0.5 + Math.random() * 0.5));
+    const _destroyed = damageUnit(target, _killed);
+    unitLog(pilot, `FPV penetrating hit — ${target._role.toUpperCase()} ${_destroyed ? 'DESTROYED' : 'crew casualties ×' + _killed}`);
+    if (allMarkers.includes(pilot)) renderPanel();
+    return;
+  }
   const _fpvTerrain = terrainAt(markerPos(target));
   const _fpvFl = target._fortLevel ?? 0;
   // Terrain degrades operator's ability to see and guide the drone precisely.
@@ -4906,7 +5004,8 @@ setInterval(() => {
       if (_om0 === 0) { clearRoute(marker); showToast(_fortBlockMsg(_ot0, marker._role), '#ef5350'); continue; } }
     // Obstacle slowdown is applied only within a ±30 m zone around each crossing point.
     const _OBST_HZ = 30;
-    let budget = (suppressed ? WALK_MS * 0.4 : WALK_MS) * wMult;
+    const _ROLE_SPD = { tank: 11.25, ifv: 16.2, apc: 20.0, artillery: 0.5, mortar: 0.65 };
+    let budget = (suppressed ? WALK_MS * 0.4 : WALK_MS) * wMult * (_ROLE_SPD[marker._role] ?? 1);
     let _obBlocked = false;
     while (budget > 0 && state.seg < route.length - 1) {
       const _a = route[state.seg], _b = route[state.seg + 1];
@@ -5009,6 +5108,23 @@ setInterval(() => {
     if (m._suppressedUntil > 0 && now >= m._suppressedUntil) {
       m._suppressedUntil = 0;
       removeSuppressedRing(m);
+      if (activePanel === m) renderPanel();
+    }
+    // Visual recon completion — spot all enemies in 300m radius
+    if (m._reconEndsAt && now > m._reconEndsAt) {
+      m._reconEndsAt = 0;
+      const _reconPos = markerPos(m);
+      let _spotted = 0;
+      for (const e of allMarkers) {
+        if (e._side === m._side) continue;
+        if (segMeters(_reconPos, markerPos(e)) <= 300) {
+          e._spottedUntil = Math.max(e._spottedUntil ?? 0, now + 120000 / TIME_SCALE);
+          e._lastKnownPos = markerPos(e);
+          showGhost(e);
+          _spotted++;
+        }
+      }
+      unitLog(m, `Recon complete — ${_spotted > 0 ? _spotted + ' enem${_spotted > 1 ? "ies" : "y"} spotted within 300m' : 'no enemies detected within 300m'}`);
       if (activePanel === m) renderPanel();
     }
     // Supply convoy movement + arrival
@@ -5376,6 +5492,21 @@ function createMarker(pt, side, count, role = '') {
     m._count = 3;
   }
   else if (role === 'artillery') { m._maxAmmo = 5; m._ammo = 3 + Math.floor(Math.random() * 3); }
+  else if (role === 'tank') {
+    // Tank crew: commander, gunner, driver (3 total)
+    m._count = 3; m._maxAmmo = 30; m._ammo = 20 + Math.floor(Math.random() * 10);
+    m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+  }
+  else if (role === 'ifv') {
+    // IFV crew: commander, gunner, driver (3 crew, 7 dismount capacity)
+    m._count = 3; m._maxAmmo = 500; m._ammo = 350 + Math.floor(Math.random() * 150);
+    m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+  }
+  else if (role === 'apc') {
+    // APC crew: commander, gunner, driver (3 crew, 7 dismount capacity)
+    m._count = 3; m._maxAmmo = 400; m._ammo = 300 + Math.floor(Math.random() * 100);
+    m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+  }
   allMarkers.push(m);
   m.addTo(map);
   // Enemy units start hidden (fog of war) — admin sees all.
@@ -5850,7 +5981,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-08-22-CDH';
+const VERSION = '2026-08-22-CDI';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v2'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
