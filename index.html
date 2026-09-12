@@ -1080,8 +1080,17 @@ const VEHICLE_ARMOR = {
           gun: '30mm 2A72 / 14.5mm KPV', speed_kmh: 80, crew: 3, passengers: 7,
           desc: 'Steel hull (BTR-82A/BTR-80)' },
 };
+// Mangal cage armor — Russian/Ukrainian anti-FPV cope cage
+// deflect: FPV deflection probability with cage installed
+// hp: cage hit-points (each absorbed FPV reduces by 1; cage destroyed when 0)
+// installSec: game-time seconds to install (divide by TIME_SCALE for real seconds)
+const MANGAL_STATS = {
+  tank: { hp: 15, deflect: 0.97, installSec: 120 },
+  ifv:  { hp: 10, deflect: 0.93, installSec:  90 },
+  apc:  { hp:  8, deflect: 0.90, installSec:  75 },
+};
 
-function soldierIcon(side, count, role = '') {
+function soldierIcon(side, count, role = '', mangalHp = null) {
   const sz     = count >= 4 ? 32 : 26;
   const cls    = side === 'blue' ? 'blue-marker' : 'red-marker';
   const lbl    = role ? ROLES[role]?.label ?? role : '';
@@ -1090,14 +1099,21 @@ function soldierIcon(side, count, role = '') {
   const innerHtml = sym
     ? `<span style="font-size:${sz < 30 ? 9 : 11}px;line-height:1;display:block;color:${accent};margin-bottom:-1px">${sym}</span><span style="font-size:${sz < 30 ? 10 : 12}px;font-weight:700;line-height:1">${count}</span>`
     : `${count}`;
+  const _mangalBorder = mangalHp > 0 ? `;outline:2px dashed #ff9500;outline-offset:2px` : '';
+  const _mangalBadge = mangalHp > 0
+    ? `<div style="position:absolute;top:-6px;right:-8px;background:#ff9500;color:#000;font-size:7px;font-weight:900;padding:1px 3px;border-radius:2px;line-height:1;min-width:14px;text-align:center">⧦${mangalHp}</div>`
+    : '';
   return L.divIcon({
     className: '',
     html: `<div style="display:flex;flex-direction:column;align-items:center;gap:1px">
-      <div class="soldier-marker ${cls}" style="width:${sz}px;height:${sz}px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-color:${accent};box-shadow:0 0 0 1px ${accent}44">${innerHtml}</div>
+      <div style="position:relative;display:inline-block">
+        <div class="soldier-marker ${cls}" style="width:${sz}px;height:${sz}px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-color:${accent};box-shadow:0 0 0 1px ${accent}44${_mangalBorder}">${innerHtml}</div>
+        ${_mangalBadge}
+      </div>
       ${lbl ? `<div style="font-size:8px;font-weight:700;color:#fff;text-shadow:0 1px 3px #000;white-space:nowrap;letter-spacing:.2px">${lbl}</div>` : ''}
     </div>`,
-    iconSize: [sz, sz + (lbl ? 13 : 0)],
-    iconAnchor: [sz/2, sz/2],
+    iconSize: [sz + (mangalHp > 0 ? 8 : 0), sz + (lbl ? 13 : 0)],
+    iconAnchor: [(sz + (mangalHp > 0 ? 8 : 0))/2, sz/2],
     popupAnchor: [0, -sz/2 - 4]
   });
 }
@@ -2219,12 +2235,12 @@ function damageUnit(marker, casualties) {
     marker._ammo   = aliveSoldiers(marker).reduce((s, sol) => s + sol.ammo, 0);
     marker._maxAmmo = marker._soldiers.reduce((s, sol) => s + (SOLDIER_ROLES[sol.role] ?? SOLDIER_ROLES['rifleman']).ammo, 0);
     if (marker._count === 0) { fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true; }
-    marker.setIcon(soldierIcon(marker._side, marker._count, marker._role));
+    marker.setIcon(soldierIcon(marker._side, marker._count, marker._role, marker._mangalHp ?? null));
     return false;
   }
   marker._count = Math.max(0, marker._count - casualties);
   if (marker._count === 0) { fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true; }
-  marker.setIcon(soldierIcon(marker._side, marker._count, marker._role));
+  marker.setIcon(soldierIcon(marker._side, marker._count, marker._role, marker._mangalHp ?? null));
   return false;
 }
 
@@ -2525,12 +2541,34 @@ function _buildActTab(m, now, moving) {
   // Armored vehicle panel section
   if (VEHICLE_ARMOR[m._role]) {
     const _va = VEHICLE_ARMOR[m._role];
+    const _ms = MANGAL_STATS[m._role];
+    const _fpvPct = m._mangalHp > 0 ? Math.round(_ms.deflect*100) : Math.round(_va.fpv*100);
+    const _fpvNote = m._mangalHp > 0 ? ` (mangal)` : '';
     h += `<div class="psec">Vehicle · ${ROLES[m._role]?.label ?? m._role}</div>`;
     h += `<div class="pb-note">${_va.gun}</div>`;
     h += `<div class="pb-note">Crew: ${_va.crew}${_va.passengers > 0 ? ` · Dismount capacity: ${_va.passengers}` : ''}</div>`;
-    h += `<div class="pb-note">SA: ${Math.round(_va.sa*100)}% · FPV: ${Math.round(_va.fpv*100)}% · Art: ${Math.round(_va.art*100)}% protection</div>`;
+    h += `<div class="pb-note">SA: ${Math.round(_va.sa*100)}% · FPV: ${_fpvPct}%${_fpvNote} · Art: ${Math.round(_va.art*100)}% protection</div>`;
     h += `<div class="pb-note" style="color:#90a4ae;font-size:10px">${_va.desc} · Road speed ${_va.speed_kmh} km/h</div>`;
     h += `<div class="pb-note" style="color:#aaa;font-size:10px">Thermal optics — ${unitRangeM(m)}m detection range</div>`;
+    // Mangal cage armor section
+    const _canMangal = m._side === userSide || _adminAuthed;
+    h += `<div class="psec">⧦ Mangal Cage Armor</div>`;
+    if (m._mangalInstalling) {
+      const _mRem = Math.max(0, Math.ceil((m._mangalInstallAt - now) / 1000));
+      h += `<div class="pb-note" style="color:#ff9500">Installing — ${_mRem}s remaining</div>`;
+      if (_canMangal) h += _pb('Cancel Installation', '✕', '', "_pa('mangal-cancel')");
+    } else if (m._mangalHp > 0) {
+      const _mPct = Math.round(m._mangalHp / _ms.hp * 100);
+      const _mCol = _mPct > 60 ? '#81c784' : _mPct > 30 ? '#ffd54f' : '#ef9a9a';
+      h += `<div class="pb-note" style="color:${_mCol}">⧦ Active — ${m._mangalHp}/${_ms.hp} hits remaining (${_mPct}%)</div>`;
+      h += `<div class="pb-note" style="color:#90a4ae;font-size:10px">FPV deflection: ${Math.round(_ms.deflect*100)}% (bare: ${Math.round(_va.fpv*100)}%)</div>`;
+      if (_canMangal) h += _pb('Remove Mangal', '✕', '', "_pa('mangal-remove')");
+    } else {
+      h += `<div class="pb-note" style="color:#90a4ae">No cage installed — bare armor only</div>`;
+      h += `<div class="pb-note" style="color:#90a4ae;font-size:10px">Install: ${Math.round(_ms.installSec / TIME_SCALE)}s · ${_ms.hp} hits capacity · FPV → ${Math.round(_ms.deflect*100)}%</div>`;
+      if (_canMangal) h += _pb(`Install Mangal Cage`, '⧦', 'tac', "_pa('mangal-install')");
+      else h += `<div class="pb-note" style="color:#888;font-size:10px">Enemy vehicle — cannot install</div>`;
+    }
   }
   if (m._role === 'fpv') {
     h += `<div class="psec">Strike</div>`;
@@ -3180,6 +3218,9 @@ window._pa = function(action) {
   else if (action === 'supply-battery') { requestSupply(m, 'battery'); }
   else if (action === 'bda-start')  { startBDA(m); }
   else if (action === 'bda-abort')  { m._bdaAt = 0; m._bdaTerrain = null; unitLog(m, 'BDA aborted'); renderPanel(); }
+  else if (action === 'mangal-install') { installMangal(m); }
+  else if (action === 'mangal-cancel')  { cancelMangal(m); }
+  else if (action === 'mangal-remove')  { removeMangal(m); }
   else if (action.startsWith('antenna-dismantle-')) {
     const _aid = action.slice('antenna-dismantle-'.length);
     if (_aid === 'abort') { m._dismantleAt = 0; m._dismantleTarget = null; unitLog(m, 'Antenna dismantle aborted'); renderPanel(); }
@@ -4123,6 +4164,40 @@ function executeFPVPointStrike(pilot, latlng) {
 }
 
 // Step 4: drone arrives → apply casualties
+function installMangal(m) {
+  const ms = MANGAL_STATS[m._role];
+  if (!ms || m._mangalHp > 0 || m._mangalInstalling) return;
+  const realMs = (ms.installSec * 1000) / TIME_SCALE;
+  m._mangalInstalling = true;
+  m._mangalInstallAt = Date.now() + realMs;
+  unitLog(m, `Installing mangal cage · ETA ${Math.round(ms.installSec / TIME_SCALE)}s · ${ms.hp} hits capacity`);
+  showToast('Mangal cage installation started', '#ff9500');
+  setTimeout(function() {
+    if (!m._mangalInstalling || !allMarkers.includes(m)) return;
+    m._mangalInstalling = false; m._mangalInstallAt = 0;
+    m._mangalHp = ms.hp;
+    m.setIcon(soldierIcon(m._side, m._count, m._role, m._mangalHp));
+    unitLog(m, `Mangal cage installed · ${ms.hp} hits capacity · FPV deflection ${Math.round(ms.deflect*100)}%`);
+    showToast('Mangal cage installed!', '#ff9500');
+    fbSyncAnyUnit(m);
+    if (activePanel === m) renderPanel();
+  }, realMs);
+  if (activePanel === m) renderPanel();
+}
+function cancelMangal(m) {
+  m._mangalInstalling = false; m._mangalInstallAt = 0;
+  unitLog(m, 'Mangal installation cancelled');
+  showToast('Mangal installation cancelled', '#888');
+  if (activePanel === m) renderPanel();
+}
+function removeMangal(m) {
+  m._mangalHp = null; m._mangalInstalling = false; m._mangalInstallAt = 0;
+  m.setIcon(soldierIcon(m._side, m._count, m._role, null));
+  unitLog(m, 'Mangal cage removed');
+  showToast('Mangal removed', '#888');
+  fbSyncAnyUnit(m);
+  if (activePanel === m) renderPanel();
+}
 function applyFPVImpact(pilot, target, intercepted) {
   if (intercepted) {
     unitLog(pilot, 'FPV shot down by enemy infantry');
@@ -4143,6 +4218,24 @@ function applyFPVImpact(pilot, target, intercepted) {
   // APC: 35% (add-on slat / cage only).
   if (VEHICLE_ARMOR[target._role] != null) {
     const _va = VEHICLE_ARMOR[target._role];
+    const _ms = MANGAL_STATS[target._role];
+    // Mangal (cope cage) check — pre-detonates FPV warhead outside standoff distance
+    if (_ms && target._mangalHp > 0) {
+      if (Math.random() < _ms.deflect) {
+        target._mangalHp--;
+        const _mHpLeft = target._mangalHp;
+        if (_mHpLeft <= 0) target._mangalHp = null; // cage destroyed
+        const _mSuffix = _mHpLeft > 0 ? ` · cage: ${_mHpLeft} hits left` : ' · MANGAL DESTROYED';
+        unitLog(pilot, `FPV hit · deflected by mangal cage (${target._role.toUpperCase()})${_mSuffix}`);
+        unitLog(target, `FPV pre-detonated by mangal cage${_mSuffix}`);
+        target.setIcon(soldierIcon(target._side, target._count, target._role, target._mangalHp ?? null));
+        fbSyncAnyUnit(target);
+        if (allMarkers.includes(pilot)) renderPanel();
+        return;
+      }
+      // FPV threaded through cage gap — ERA/armor check follows
+      unitLog(pilot, `FPV threaded through mangal gap · ERA check follows`);
+    }
     if (Math.random() < _va.fpv) {
       unitLog(pilot, `FPV hit — ERA/armour deflected (${target._role.toUpperCase()}), no crew casualties`);
       unitLog(target, `FPV deflected by ${_va.desc.split('(')[0].trim()} — crew safe`);
@@ -5734,6 +5827,7 @@ function fbPushMySide() {
         fortLevel: m._fortLevel != null ? m._fortLevel : 0,
         ammo: m._ammo != null ? m._ammo : null,
         hp: m._hp != null ? m._hp : null,
+        mangalHp: m._mangalHp != null ? m._mangalHp : null,
       };
     }
     var n = Object.keys(updates).length;
@@ -5768,6 +5862,7 @@ function fbSyncAnyUnit(m) {
     fortLevel: m._fortLevel != null ? m._fortLevel : 0,
     ammo: m._ammo != null ? m._ammo : null,
     hp: m._hp != null ? m._hp : null,
+    mangalHp: m._mangalHp != null ? m._mangalHp : null,
   }).catch(function() {});
 }
 
@@ -5824,11 +5919,15 @@ function fbApplyUnit(d) {
     if (d.count != null && d.count !== existing._count) {
       existing._count = d.count;
       if (d.count === 0) { removeUnit(existing); return; }  // unit destroyed on other client
-      existing.setIcon(soldierIcon(existing._side, d.count, existing._role));
+      existing.setIcon(soldierIcon(existing._side, d.count, existing._role, existing._mangalHp ?? null));
     }
     if (d.fortLevel != null) { existing._fortLevel = d.fortLevel; updateFortBadge(existing); }
     if (d.ammo != null) existing._ammo = (existing._maxAmmo != null) ? Math.min(d.ammo, existing._maxAmmo) : d.ammo;
     if (d.hp != null) existing._hp = d.hp;
+    if (d.mangalHp !== undefined && d.mangalHp !== existing._mangalHp) {
+      existing._mangalHp = d.mangalHp;
+      existing.setIcon(soldierIcon(existing._side, existing._count, existing._role, existing._mangalHp ?? null));
+    }
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     if ((d.count ?? 1) <= 0) return; // never recreate a unit with count 0
     if (_killedUidCache.has(d.uid)) return; // already destroyed this session
@@ -5838,6 +5937,7 @@ function fbApplyUnit(d) {
     if (d.fortLevel) { m2._fortLevel = d.fortLevel; setTimeout(function() { updateFortBadge(m2); }, 50); }
     if (d.ammo != null) m2._ammo = d.ammo;
     if (d.hp != null) m2._hp = d.hp;
+    if (d.mangalHp != null) { m2._mangalHp = d.mangalHp; m2.setIcon(soldierIcon(m2._side, m2._count, m2._role, m2._mangalHp)); }
     if (d.route && d.route.length >= 2) {
       var _rLine2Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
       var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine2Op}).addTo(map);
@@ -6030,7 +6130,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDQ';
+const VERSION = '2026-09-06-CDR';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
