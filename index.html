@@ -2218,12 +2218,12 @@ function damageUnit(marker, casualties) {
     // Sync ammo pool from surviving soldiers
     marker._ammo   = aliveSoldiers(marker).reduce((s, sol) => s + sol.ammo, 0);
     marker._maxAmmo = marker._soldiers.reduce((s, sol) => s + (SOLDIER_ROLES[sol.role] ?? SOLDIER_ROLES['rifleman']).ammo, 0);
-    if (marker._count === 0) { fbSyncUnit(marker); removeUnit(marker); return true; }
+    if (marker._count === 0) { fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true; }
     marker.setIcon(soldierIcon(marker._side, marker._count, marker._role));
     return false;
   }
   marker._count = Math.max(0, marker._count - casualties);
-  if (marker._count === 0) { fbSyncUnit(marker); removeUnit(marker); return true; }
+  if (marker._count === 0) { fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true; }
   marker.setIcon(soldierIcon(marker._side, marker._count, marker._role));
   return false;
 }
@@ -3395,8 +3395,8 @@ function fightTick(attacker, defender) {
   const aDestroyed = aCas > 0 ? damageUnit(attacker, aCas) : false;
   const dDestroyed = damageUnit(defender, dCas);
   // Immediately push both units so all clients see this tick's outcome right away
-  fbSyncAnyUnit(attacker);
-  fbSyncAnyUnit(defender);
+  if (!aDestroyed) fbSyncAnyUnit(attacker); // skip if destroyed — unit_kills handles cross-client removal
+  if (!dDestroyed) fbSyncAnyUnit(defender);
   const msg = `Firefight at ${Math.round(distM)}m! Enemy: −${dCas}${dDestroyed?' ✗':''}  Friendly: −${aCas}${aDestroyed?' ✗':''}`;
   unitLog(attacker, `Exchange vs ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m: we −${aCas}${aDestroyed?' (destroyed)':''}, they −${dCas}${dDestroyed?' (destroyed)':''}`);
   unitLog(defender, `Exchange vs ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m: we −${dCas}${dDestroyed?' (destroyed)':''}, they −${aCas}${aDestroyed?' (destroyed)':''}`);
@@ -5559,6 +5559,7 @@ const _fbClientId = (() => {
 })();
 let _fbDb = null;
 let _fbSnapshotReady = false; // becomes true once our side's snapshot has arrived
+const _killedUidCache = new Set(); // uids of destroyed units — prevents re-creation from stale Firebase echoes
 const _fbInitSnapshotDone = {}; // tracks per-side first-snapshot orphan cleanup
 
 function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || FB_DEFAULT_CFG; } catch { return FB_DEFAULT_CFG; } }
@@ -5684,6 +5685,22 @@ function initFirebase() {
           showToast('FPV drone shot down by enemy!', '#ef5350');
         }
       });
+      _fbDb.ref('unit_kills').on('child_added', function(snap) {
+        var _ukUid = snap.key;
+        var _ukData = snap.val();
+        _killedUidCache.add(_ukUid);
+        // Skip own kills — already removed locally
+        if (_ukData && _ukData.clientId === _fbClientId) return;
+        var _ukUnit = allMarkers.find(function(m) { return m._uid === _ukUid; });
+        if (_ukUnit) {
+          removeUnit(_ukUnit);
+          showToast((_ukUnit._side === userSide ? "Our " : "Enemy ") + (ROLES[_ukUnit._role]?.label ?? _ukUnit._role) + " destroyed!", _ukUnit._side === userSide ? "#ef5350" : "#66bb6a");
+          // If it was our unit, clean up from Firebase
+          if (_ukUnit._side === userSide || _adminAuthed) fbRemoveUnit(_ukUnit);
+        }
+        // Auto-expire kill record after 30s
+        setTimeout(function() { if (_fbDb) _fbDb.ref('unit_kills/' + _ukUid).remove().catch(function() {}); }, 30000);
+      });
 
       // Heartbeat every 2s — first push is deferred until the initial Firebase
       // snapshot has been received (so we push the saved state, not fresh spawns)
@@ -5759,6 +5776,13 @@ function fbRemoveUnit(m) {
   _fbDb.ref('units_' + userSide + '/' + m._uid).remove().catch(function() {});
 }
 
+// Signal unit destruction to all clients via unit_kills node (avoids race with fbPushMySide)
+function _fbKillUnit(m) {
+  if (!_fbDb || !m._uid) return;
+  _killedUidCache.add(m._uid);
+  _fbDb.ref('unit_kills/' + m._uid).set({ killedAt: Date.now(), clientId: _fbClientId }).catch(function() {});
+}
+
 function fbApplySideSnapshot(side, all) {
   if (!userSide && !_adminAuthed) return;
   for (var uid in all) {
@@ -5806,6 +5830,8 @@ function fbApplyUnit(d) {
     if (d.ammo != null) existing._ammo = (existing._maxAmmo != null) ? Math.min(d.ammo, existing._maxAmmo) : d.ammo;
     if (d.hp != null) existing._hp = d.hp;
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
+    if ((d.count ?? 1) <= 0) return; // never recreate a unit with count 0
+    if (_killedUidCache.has(d.uid)) return; // already destroyed this session
     var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
     m2._uid = d.uid;
     m2._clientId = d.clientId;
@@ -6004,7 +6030,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDP';
+const VERSION = '2026-09-06-CDQ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
