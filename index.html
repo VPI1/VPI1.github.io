@@ -1098,7 +1098,7 @@ function soldierIcon(side, count, role = '', mangalHp = null) {
   const x1 = B, y1 = B, x2 = W - B, y2 = H - B;
   let sym = '';
   switch (role) {
-    case 'infantry': case 'sniper': case 'drone':
+    case 'infantry': case 'sniper':
       sym = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>` +
             `<line x1="${x2}" y1="${y1}" x2="${x1}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>`;
       break;
@@ -1137,6 +1137,13 @@ function soldierIcon(side, count, role = '', mangalHp = null) {
       break;
     case 'mortar':
       sym = `<circle cx="${cx}" cy="${cy}" r="${(H-14)/2}" fill="none" stroke="${ink}" stroke-width="2.5"/>`;
+      break;
+    case 'drone': case 'mavic':
+      sym = `<polygon points="${x1+2},${y1+5} ${cx},${cy+4} ${x2-2},${y1+5} ${x2-8},${y1+5} ${cx},${cy} ${x1+8},${y1+5}" fill="${ink}"/>`;
+      break;
+    case 'fpv':
+      sym = `<polygon points="${x1+2},${y1+5} ${cx},${cy+4} ${x2-2},${y1+5} ${x2-8},${y1+5} ${cx},${cy} ${x1+8},${y1+5}" fill="${ink}"/>` +
+            `<circle cx="${cx}" cy="${cy+4}" r="3" fill="${fill}" stroke="${ink}" stroke-width="1.5"/>`;
       break;
     default:
       sym = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>` +
@@ -6180,7 +6187,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDS';
+const VERSION = '2026-09-06-CDT';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
