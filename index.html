@@ -128,7 +128,11 @@
     /* section label */
     .psec { font-size:9px; letter-spacing:1.1px; text-transform:uppercase; color:#8ab0d0; font-weight:700; margin:12px 0 5px; }
     .psec:first-child { margin-top:0; }
-    /* fortification indicator on marker */
+    /* fort badge inside Leaflet marker (no position:relative needed — Leaflet el is already absolute) */
+.fort-badge { position: absolute !important; top: -6px; left: -6px; background: #ffd54f;
+  color: #000; font-size: 7px; font-weight: 900; padding: 1px 3px; border-radius: 2px;
+  line-height: 1; white-space: nowrap; pointer-events: none; z-index: 1; }
+/* fortification indicator on marker */
     .fort-badge { position:absolute; top:-7px; right:-4px;
       font-size:8px; background:rgba(100,60,10,0.92); color:#ffd54f; border-radius:3px;
       padding:1px 4px; white-space:nowrap; pointer-events:none; z-index:10; letter-spacing:.3px;
@@ -1080,10 +1084,17 @@ const VEHICLE_ARMOR = {
           gun: '30mm 2A72 / 14.5mm KPV', speed_kmh: 80, crew: 3, passengers: 7,
           desc: 'Steel hull (BTR-82A/BTR-80)' },
 };
+const VEH_PASSENGER_CAP = { tank: 0, ifv: 7, apc: 7 };
+const VEH_DISMOUNT_MS = 12000;
 // Mangal cage armor — Russian/Ukrainian anti-FPV cope cage
 // deflect: FPV deflection probability with cage installed
 // hp: cage hit-points (each absorbed FPV reduces by 1; cage destroyed when 0)
 // installSec: game-time seconds to install (divide by TIME_SCALE for real seconds)
+const VEHICLE_GUN = {
+  tank: { dmgPerShot: 5, baseHit: 0.40, armorPen: 0.88, mangalPenalty: 0.55 },
+  ifv:  { dmgPerShot: 2, baseHit: 0.55, armorPen: 0.50, mangalPenalty: 1.00 },
+  apc:  { dmgPerShot: 1, baseHit: 0.60, armorPen: 0.30, mangalPenalty: 1.00 },
+};
 const MANGAL_STATS = {
   tank: { hp: 15, deflect: 0.97, installSec: 120 },
   ifv:  { hp: 10, deflect: 0.93, installSec:  90 },
@@ -1447,6 +1458,12 @@ function convoyRouteClick(latlng) {
 function finishConvoyRoute() {
   if (!convoyRouteMode) return;
   const unit = convoyRouteUnit;
+  const _coc = routeObstacleCrossing(convoyRoutePoints, 'tank');
+  if (_coc !== null && obstacleSpeedMult(_coc, 'tank') === 0) {
+    showToast(_fortBlockMsg(_coc, 'tank') + ' — convoy route blocked!', '#ef5350');
+    cancelConvoyRoute();
+    return;
+  }
   unit._convoyRoute = [...convoyRoutePoints];
   const _km = (unit._convoyRoute.reduce((a,p,i)=>i?a+segMeters(unit._convoyRoute[i-1],p):0,0)/1000).toFixed(1);
   cleanupConvoyRoute();
@@ -2234,12 +2251,28 @@ function damageUnit(marker, casualties) {
     // Sync ammo pool from surviving soldiers
     marker._ammo   = aliveSoldiers(marker).reduce((s, sol) => s + sol.ammo, 0);
     marker._maxAmmo = marker._soldiers.reduce((s, sol) => s + (SOLDIER_ROLES[sol.role] ?? SOLDIER_ROLES['rifleman']).ammo, 0);
-    if (marker._count === 0) { fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true; }
+    if (marker._count === 0) {
+      const _dp = markerPos(marker);
+      if (_dp && marker._log) unitLog(marker, `☠ Unit lost at ${_dp[0].toFixed(4)}°N ${_dp[1].toFixed(4)}°E`);
+      fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true;
+    }
     marker.setIcon(soldierIcon(marker._side, marker._count, marker._role, marker._mangalHp ?? null));
     return false;
   }
   marker._count = Math.max(0, marker._count - casualties);
-  if (marker._count === 0) { fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true; }
+  if (marker._passengers?.length) {
+    const _pxDmg = Math.floor(casualties * 0.30);
+    if (_pxDmg > 0) {
+      for (const p of marker._passengers) p.count = Math.max(0, (p.count??0) - _pxDmg);
+      marker._passengers = marker._passengers.filter(p => (p.count??0) > 0);
+      if (marker._log) unitLog(marker, `${_pxDmg} passenger(s) WIA from vehicle damage`);
+    }
+  }
+  if (marker._count === 0) {
+    const _dp2 = markerPos(marker);
+    if (_dp2 && marker._log) unitLog(marker, `☠ Unit lost at ${_dp2[0].toFixed(4)}°N ${_dp2[1].toFixed(4)}°E`);
+    fbSyncUnit(marker); _fbKillUnit(marker); removeUnit(marker); return true;
+  }
   marker.setIcon(soldierIcon(marker._side, marker._count, marker._role, marker._mangalHp ?? null));
   return false;
 }
@@ -2550,6 +2583,22 @@ function _buildActTab(m, now, moving) {
     h += `<div class="pb-note">SA: ${Math.round(_va.sa*100)}% · FPV: ${_fpvPct}%${_fpvNote} · Art: ${Math.round(_va.art*100)}% protection</div>`;
     h += `<div class="pb-note" style="color:#90a4ae;font-size:10px">${_va.desc} · Road speed ${_va.speed_kmh} km/h</div>`;
     h += `<div class="pb-note" style="color:#aaa;font-size:10px">Thermal optics — ${unitRangeM(m)}m detection range</div>`;
+    if (VEH_PASSENGER_CAP[m._role] > 0 && (m._side === userSide || _adminAuthed)) {
+      const _cap = VEH_PASSENGER_CAP[m._role];
+      const _pax = m._passengers ?? [];
+      const _paxCount = _pax.reduce((s, p) => s + (p.count ?? 0), 0);
+      h += `<div class="psec">⬙ Passengers (${_paxCount}/${_cap})</div>`;
+      if (_pax.length > 0) {
+        for (const p of _pax) h += `<div class="pb-note">${p.role ? (ROLES[p.role]?.label ?? p.role) : 'Infantry'} · ${p.count} troops</div>`;
+        if (m._dismountingAt > now) {
+          h += `<div class="pb-note" style="color:#ffa726">Dismounting… ${Math.ceil((m._dismountingAt-now)/1000)}s</div>`;
+        } else {
+          h += _pb('Dismount All', '⬙', 'tac', "_pa('veh-dismount')");
+        }
+      } else {
+        h += `<div class="pb-note" style="color:#888">Empty · ${_cap} slots available</div>`;
+      }
+    }
     // Mangal cage armor section
     const _canMangal = m._side === userSide || _adminAuthed;
     h += `<div class="psec">⧦ Mangal Cage Armor</div>`;
@@ -3242,6 +3291,7 @@ window._pa = function(action) {
   else if (action === 'bda-start')  { startBDA(m); }
   else if (action === 'bda-abort')  { m._bdaAt = 0; m._bdaTerrain = null; unitLog(m, 'BDA aborted'); renderPanel(); }
   else if (action === 'mangal-install') { installMangal(m); }
+  else if (action === 'veh-dismount')   { _vehDismount(m); }
   else if (action === 'mangal-cancel')  { cancelMangal(m); }
   else if (action === 'mangal-remove')  { removeMangal(m); }
   else if (action.startsWith('antenna-dismantle-')) {
@@ -3455,9 +3505,43 @@ function fightTick(attacker, defender) {
     return;
   }
 
+  const _aGun = VEHICLE_GUN[attacker._role];
+  const _dArmor = VEHICLE_ARMOR[defender._role];
+  const _aArmor = VEHICLE_ARMOR[attacker._role];
+  if (_aGun || _dArmor) {
+    if (_aGun) {
+      const _mangalMiss = (attacker._mangalHp > 0) ? _aGun.mangalPenalty : 1.0;
+      const _hitP = _aGun.baseHit * (atkSup ? 0.5 : 1.0) * groundVisibilityFactor * _mangalMiss;
+      if (_rng() < _hitP) {
+        if (_dArmor) {
+          if (_rng() < _aGun.armorPen * (1 - _dArmor.sa * 0.2)) dCas = 1;
+        } else {
+          const _fr = FORT_COVER?.smallArms?.[defender._fortLevel ?? 0] ?? 0;
+          dCas = Math.max(0, Math.round(_aGun.dmgPerShot * (1 - _fr) * (0.5 + _rng() * 1.0)));
+        }
+      }
+    }
+    if (defResponding) {
+      const _dGun = VEHICLE_GUN[defender._role];
+      if (_dGun) {
+        const _dHitP = _dGun.baseHit * (defSup ? 0.4 : 1.0) * groundVisibilityFactor;
+        if (_rng() < _dHitP) {
+          if (_aArmor) {
+            if (_rng() < _dGun.armorPen * (1 - _aArmor.sa * 0.2)) aCas = 1;
+          } else {
+            const _afr = FORT_COVER?.smallArms?.[attacker._fortLevel ?? 0] ?? 0;
+            aCas = Math.max(0, Math.round(_dGun.dmgPerShot * (1 - _afr) * (0.5 + _rng() * 1.0)));
+          }
+        }
+      } else if (_dArmor && !_aArmor) {
+        if (_rng() > _dArmor.sa * 1.1) aCas = 1;
+      }
+    }
+  } else {
   // No guaranteed kill — both sides may score zero in a tick
   if (_rng() < 0.10) dCas++;
   if (defResponding && _rng() < 0.10) aCas++;
+  }
   const aDestroyed = aCas > 0 ? damageUnit(attacker, aCas) : false;
   const dDestroyed = damageUnit(defender, dCas);
   // Immediately push both units so all clients see this tick's outcome right away
@@ -4191,6 +4275,32 @@ function executeFPVPointStrike(pilot, latlng) {
 }
 
 // Step 4: drone arrives → apply casualties
+function _vehDismount(m) {
+  const _pax = m._passengers;
+  if (!_pax || !_pax.length) { showToast('No passengers aboard.', '#888'); return; }
+  if (m._dismountingAt && m._dismountingAt > Date.now()) { showToast('Already dismounting…', '#888'); return; }
+  m._dismountingAt = Date.now() + VEH_DISMOUNT_MS;
+  const _tot = _pax.reduce((s,p)=>s+(p.count??0),0);
+  showToast(`Dismounting ${_tot} troops — ${Math.round(VEH_DISMOUNT_MS/1000)}s`, '#ffd54f');
+  unitLog(m, `Dismounting ${_tot} passengers`);
+  renderPanel();
+  setTimeout(() => {
+    if (!allMarkers.includes(m)) return;
+    const pos = markerPos(m);
+    for (const p of (m._passengers ?? [])) {
+      if (!(p.count > 0)) continue;
+      const nm = createMarker(pos, m._side, p.count, p.role ?? 'infantry');
+      nm._uid = 'dis_' + Math.random().toString(36).slice(2);
+      nm._log = [];
+      unitLog(nm, `Dismounted from ${ROLES[m._role]?.label ?? 'vehicle'}`);
+      fbSyncUnit(nm);
+    }
+    m._passengers = [];
+    m._dismountingAt = 0;
+    unitLog(m, 'Dismount complete');
+    if (activePanel === m) renderPanel();
+  }, VEH_DISMOUNT_MS);
+}
 function installMangal(m) {
   const ms = MANGAL_STATS[m._role];
   if (!ms || m._mangalHp > 0 || m._mangalInstalling) return;
@@ -5503,7 +5613,7 @@ function updateFortBadge(m) {
   const el = m.getElement(); if (!el) return;
   let badge = el.querySelector('.fort-badge');
   if (m._fortLevel === 0) { badge?.remove(); return; }
-  if (!badge) { badge = document.createElement('div'); badge.className = 'fort-badge'; el.style.position = 'relative'; el.appendChild(badge); }
+  if (!badge) { badge = document.createElement('div'); badge.className = 'fort-badge'; el.appendChild(badge); }
   badge.textContent = FORT_LABELS[m._fortLevel];
 }
 // Apply structural damage to a fortified position from a nearby explosion.
@@ -5672,19 +5782,19 @@ function createMarker(pt, side, count, role = '') {
   }
   else if (role === 'artillery') { m._maxAmmo = 5; m._ammo = 3 + Math.floor(Math.random() * 3); }
   else if (role === 'tank') {
-    // Tank crew: commander, gunner, driver (3 total)
     m._count = 3; m._maxAmmo = 30; m._ammo = 20 + Math.floor(Math.random() * 10);
     m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+    m._passengers = []; m._dismountingAt = 0;
   }
   else if (role === 'ifv') {
-    // IFV crew: commander, gunner, driver (3 crew, 7 dismount capacity)
     m._count = 3; m._maxAmmo = 500; m._ammo = 350 + Math.floor(Math.random() * 150);
     m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+    m._passengers = []; m._dismountingAt = 0;
   }
   else if (role === 'apc') {
-    // APC crew: commander, gunner, driver (3 crew, 7 dismount capacity)
     m._count = 3; m._maxAmmo = 400; m._ammo = 300 + Math.floor(Math.random() * 100);
     m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+    m._passengers = []; m._dismountingAt = 0;
   }
   allMarkers.push(m);
   m.addTo(map);
@@ -6206,7 +6316,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDV';
+const VERSION = '2026-09-06-CDW';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -8118,18 +8228,22 @@ document.addEventListener('click', e => {
 // Barbed wire: 2 rows concertina at ~1.8 m — significant infantry slowdown
 function obstacleSpeedMult(obstType, role) {
   if (!obstType || role === 'mavic') return 1.0;
+  const _isVeh = role === 'tank' || role === 'ifv' || role === 'apc';
   if (obstType === 'ditches') {
+    if (_isVeh)               return 0.0;  // vehicles cannot cross AT ditch
     if (role === 'artillery') return 0.0;  // can't cross AT ditch
     if (role === 'mortar')    return 0.12; // crew-carried weapon, hardest
     if (role === 'fpv')       return 0.22; // individual, somewhat easier
     return 0.18;                           // infantry
   }
   if (obstType === 'teeth') {
+    if (_isVeh)               return 0.0;  // dragon's teeth are vehicle traps
     if (role === 'artillery') return 0.0;  // completely blocked
     if (role === 'mortar')    return 0.75; // can squeeze through on foot
     return 0.82;                           // infantry, fpv — minor slowdown
   }
   if (obstType === 'wire') {
+    if (_isVeh)               return 0.15; // vehicles can crush wire but slowed
     if (role === 'artillery') return 0.0;  // wire entangles tracks/wheels
     if (role === 'mortar')    return 0.30; // carrying equipment, harder
     if (role === 'fpv')       return 0.42; // individual
@@ -8162,10 +8276,17 @@ function routeObstacleCrossing(points, role) {
 }
 
 function _fortBlockMsg(obstType, role) {
-  if (obstType === 'ditches') return role === 'artillery'
-    ? 'Route blocked — artillery cannot cross anti-tank ditch!'
-    : 'Route crosses anti-tank ditch — too deep to pass!';
-  if (obstType === 'teeth') return "Route blocked — dragon’s teeth stop vehicle movement!";
+  const _isVeh = role === 'tank' || role === 'ifv' || role === 'apc';
+  if (obstType === 'ditches') {
+    if (_isVeh) return 'Route blocked — vehicles cannot cross anti-tank ditch!';
+    return role === 'artillery'
+      ? 'Route blocked — artillery cannot cross anti-tank ditch!'
+      : 'Route crosses anti-tank ditch — too deep to pass!';
+  }
+  if (obstType === 'teeth') {
+    if (_isVeh) return "Route blocked — dragon’s teeth are impassable for vehicles!";
+    return "Route blocked — dragon’s teeth stop vehicle movement!";
+  }
   if (obstType === 'wire')  return role === 'artillery'
     ? 'Route blocked — artillery entangled in concertina wire!'
     : 'Route crosses barbed wire — too dense to pass!';
