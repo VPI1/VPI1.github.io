@@ -2581,6 +2581,28 @@ function _buildActTab(m, now, moving) {
   }
 
   if (m._role === 'fpv' || m._role === 'mavic') {
+    // Ground combat capability (crew-served weapons, lower effectiveness)
+    const _gcFight = activeFights.has(m);
+    const _gcIncoming = [...activeFights.entries()].find(([,f]) => f.defender === m);
+    const _gcEn = findEnemiesInRange(m, 0.8).filter(e => e._spottedUntil > now);
+    h += `<div class="psec">Ground Combat</div>`;
+    h += `<div class="pb-note" style="color:#888">Crew can engage close threats · reduced effectiveness vs infantry</div>`;
+    if (_gcFight) {
+      const _gcDef = activeFights.get(m).defender;
+      h += _pb(`Cease Fire (attacking ${ROLES[_gcDef._role]?.label??'enemy'})`, '⬛', 'atk on', "_pa('disengage')");
+    } else {
+      h += _pb(`Attack · 0.80 km${_gcEn.length?` · ${_gcEn.length} visible`:' · none visible'}`, '⊕', 'atk', "_pa('attack')", !(m._ammo>0&&_gcEn.length));
+    }
+    if (_gcIncoming) {
+      const [_gcAtk] = _gcIncoming;
+      h += _pb(`Cease Fire (defending vs ${ROLES[_gcAtk._role]?.label??'enemy'})`, '⬛', 'atk on', "_pa('disengage-def')");
+    }
+    h += _pb(`Suppress · 0.80 km${_gcEn.length?` · ${_gcEn.length} visible`:' · none visible'}`, '⊘', 'sup', "_pa('suppress')", !(m._ammo>0&&_gcEn.length));
+    h += _pb('Area Suppress · click ground', '⊛', 'sup', "_pa('area-suppress')", m._ammo<=0);
+    const _holdOn = m._conds?.holdPos;
+    h += _pb(_holdOn ? 'Release Hold' : 'Hold Position', '⬙', _holdOn?'on':'tac', "_pa('hold-toggle')");
+  }
+  if (m._role === 'fpv' || m._role === 'mavic') {
     // Intelligence / BDA
     h += `<div class="psec">Intelligence</div>`;
     if (m._bdaAt) {
@@ -2699,20 +2721,21 @@ function _buildActTab(m, now, moving) {
       const _crdKm = (m._convoyRoute.reduce((acc,p,i)=>i?acc+segMeters(m._convoyRoute[i-1],p):0,0)/1000).toFixed(1);
       h += `<div class="pb-note" style="color:#81c784">Route planned — ${_crdKm} km · convoy follows waypoints</div>`;
       h += _pb('Clear convoy route', '✕', '', "_pa('convoy-route-clear')");
+      if (m._role === 'infantry' || m._role === 'mortar' || m._role === 'artillery') {
+        const ammoFull = m._ammo >= m._maxAmmo;
+        h += _pb(`Request Ammo${ammoFull?' (full)':''}`, '◈', ammoFull?'':'tac', ammoFull?'':"_pa('supply-ammo')", ammoFull);
+      }
+      if (m._role === 'fpv') {
+        const dronesFull = m._drones >= (m._maxDrones ?? FPV_MAX_DRONES);
+        h += _pb(`Request Drone Resupply${dronesFull?' (max)':''}`, '◈', dronesFull?'':'tac', dronesFull?'':"_pa('supply-drones')", dronesFull);
+      }
+      if (m._role === 'mavic') {
+        const battFull = m._mavicBattery >= 99;
+        h += _pb(`Battery Swap${battFull?' (full)':''}`, '◈', battFull?'':'tac', battFull?'':"_pa('supply-battery')", battFull);
+      }
     } else {
       h += _pb('Plan convoy route', '⊾', 'tac', "_pa('convoy-route-plan')");
-    }
-    if (m._role === 'infantry' || m._role === 'mortar' || m._role === 'artillery') {
-      const ammoFull = m._ammo >= m._maxAmmo;
-      h += _pb(`Request Ammo${ammoFull?' (full)':''}`, '◈', ammoFull?'':'tac', ammoFull?'':"_pa('supply-ammo')", ammoFull);
-    }
-    if (m._role === 'fpv') {
-      const dronesFull = m._drones >= (m._maxDrones ?? FPV_MAX_DRONES);
-      h += _pb(`Request Drone Resupply${dronesFull?' (max)':''}`, '◈', dronesFull?'':'tac', dronesFull?'':"_pa('supply-drones')", dronesFull);
-    }
-    if (m._role === 'mavic') {
-      const battFull = m._mavicBattery >= 99;
-      h += _pb(`Battery Swap${battFull?' (full)':''}`, '◈', battFull?'':'tac', battFull?'':"_pa('supply-battery')", battFull);
+      h += `<div class="pb-note" style="color:#888">Route required — plan it first to unlock supply requests</div>`;
     }
   }
 
@@ -3364,7 +3387,9 @@ function fightTick(attacker, defender) {
   const distM = segMeters(markerPos(attacker), markerPos(defender));
   const maxRange = Math.max(unitRangeM(attacker), unitRangeM(defender), 1);
   // accuracy 1.0 at ≤50m, falls to ~0.15 at max range; fog/rain reduce further
-  const accuracy = Math.max(0.08, (1 - Math.pow(distM / maxRange, 0.7) * 0.85) * groundVisibilityFactor);
+  // drone crew ground combat — reduced training vs infantry (50% effectiveness)
+  const accuracy = Math.max(0.08, (1 - Math.pow(distM / maxRange, 0.7) * 0.85) * groundVisibilityFactor) *
+    ((attacker._role === 'fpv' || attacker._role === 'mavic') ? 0.5 : 1.0);
   // inconclusive chance: 15% at close range → 60% at max range
   const inconclusiveChance = 0.15 + (1 - accuracy) * 0.55;
 
@@ -3489,7 +3514,9 @@ function endFight(attacker) {
 
 function doInfantryAttack(attacker) {
   if (activeFights.has(attacker)) { endFight(attacker); return; }
-  const rangeKm = unitRangeM(attacker) / 1000;
+  const rangeKm = (attacker._role === 'fpv' || attacker._role === 'mavic')
+    ? 0.8 // drone crew rifle range
+    : unitRangeM(attacker) / 1000;
   const enemies = findEnemiesInRange(attacker, rangeKm)
     .filter(e => e._spottedUntil > Date.now())
     .sort((a,b) => segMeters(markerPos(attacker), markerPos(a)) - segMeters(markerPos(attacker), markerPos(b)));
@@ -4887,7 +4914,8 @@ function assignRoute(marker, route) {
     marker._splitAt = Date.now();
   }
   clearRoute(movingMarker);
-  const line = L.polyline(route, { color: '#ff9500', weight: 3, dashArray: '10 6', opacity: 0.95 }).addTo(map);
+  const _lineOp = (movingMarker._side !== userSide && !_adminAuthed) ? 0 : 0.95;
+  const line = L.polyline(route, { color: '#ff9500', weight: 3, dashArray: '10 6', opacity: _lineOp }).addTo(map);
   const state = { marker: movingMarker, route, seg: 0, t: 0, line, vertices: [], splits: [] };
   movingMarkers.set(movingMarker, state);
   const totalDist = route.reduce((s,p,i) => i ? s + segMeters(route[i-1], p) : 0, 0);
@@ -4909,11 +4937,49 @@ function cancelDraw() {
   setStatus('');
 }
 
+function renderEnemyIntelPanel(m) {
+  const panel = document.getElementById('unit-panel');
+  const now = Date.now();
+  const spotted = (m._spottedUntil ?? 0) > now;
+  const ac = '#ef5350';
+  const rl = spotted ? (ROLES[m._role]?.label ?? 'Unknown') : 'Unknown unit';
+  const cnt = spotted ? m._count : '?';
+  panel.innerHTML = `
+    <div class="ph">
+      <div>
+        <div class="ph-title">${rl}</div>
+        <div class="ph-meta" style="color:${ac}">ENEMY · ${cnt} ${cnt === 1 ? 'unit' : 'units'}</div>
+      </div>
+      <button class="ph-x" onclick="closePanel()">&#x2715;</button>
+    </div>
+    <div style="padding:8px 12px">
+      <div class="psec">Known Intel</div>
+      ${spotted ? `
+        <div class="pb-note" style="color:#ffd54f">Currently spotted</div>
+        <div class="pb-note">Role: ${rl}</div>
+        <div class="pb-note">Strength: ~${cnt} personnel</div>
+        ${(typeof FORT_LABELS !== 'undefined' && m._fortLevel > 0) ? '<div class="pb-note">Fortification: ' + (FORT_LABELS[m._fortLevel] ?? 'Level ' + m._fortLevel) + '</div>' : ''}
+        ${activeFights.has(m) ? '<div class="pb-note" style="color:#ef5350">⚠ Actively engaging</div>' : ''}
+      ` : `
+        <div class="pb-note" style="color:#888">Not currently spotted</div>
+        ${m._lastKnownPos ? '<div class="pb-note">Last known position on record</div>' : ''}
+      `}
+      <div class="pb-note" style="color:#666;font-style:italic;margin-top:6px">Intelligence view — no actions available</div>
+    </div>
+  `;
+  panel.style.display = 'flex';
+}
 function selectForRoute(marker) {
   // Re-clicking the same unit while drawing → cancel draw but keep panel open
   if (activePanel === marker && drawMode) { cancelDraw(); renderPanel(); return; }
   cancelDraw(); exitCombatMode();
   activePanel = marker;
+  // Enemy unit — read-only intel panel
+  if (marker._side !== userSide && !_adminAuthed) {
+    renderEnemyIntelPanel(marker);
+    setStatus('Enemy unit — intel view only · Esc to close');
+    return;
+  }
   activeMarker = marker; // track for map-click-to-draw
   pendingSplitCount = marker._count;
   showPanelRange(marker);
@@ -5598,6 +5664,11 @@ function createMarker(pt, side, count, role = '') {
     m._drones = 3 + Math.floor(Math.random() * 3); m._maxDrones = FPV_MAX_DRONES;
     m._soldiers = [mkSoldier('fpv_pilot',0), mkSoldier('fpv_spotter',1), mkSoldier('fpv_driver',2)];
     m._count = 3;
+    m._ammo    = m._soldiers.reduce((s, sol) => s + sol.ammo, 0);
+    m._maxAmmo = m._soldiers.reduce((s, sol) => s + sol.ammo, 0);
+  }
+  else if (role === 'mavic') {
+    m._ammo = 8; m._maxAmmo = 8;
   }
   else if (role === 'artillery') { m._maxAmmo = 5; m._ammo = 3 + Math.floor(Math.random() * 3); }
   else if (role === 'tank') {
@@ -5676,16 +5747,21 @@ function toggleSearchBar() {
 function filterUnits(query) {
   const q = query.trim().toLowerCase();
   _unitFilterActive = q.length > 0;
+  const _convoyOnly = q === 'convoy';
   let shown = 0;
   for (const m of allMarkers) {
     const role  = (m._role ?? '').toLowerCase();
     const side  = (m._side ?? '').toLowerCase();
     const label = (ROLES[m._role]?.label ?? '').toLowerCase();
-    const matches = !q || role.includes(q) || side.includes(q) || label.includes(q);
+    const matches = !q || (!_convoyOnly && (role.includes(q) || side.includes(q) || label.includes(q)));
     const el = m.getElement ? m.getElement() : null;
     if (el) {
       el.style.opacity = matches ? '' : '0.08';
       el.style.pointerEvents = matches ? '' : 'none';
+    }
+    if (m._supply?.convoyMarker) {
+      const cEl = m._supply.convoyMarker.getElement ? m._supply.convoyMarker.getElement() : null;
+      if (cEl) cEl.style.opacity = (!q || _convoyOnly || matches) ? '' : '0.08';
     }
     if (matches) shown++;
   }
@@ -6130,7 +6206,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDU';
+const VERSION = '2026-09-06-CDV';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -8248,6 +8324,7 @@ map.on('click', function(e) {
     { key:'fpv',      sym:'▲', label:'FPV pilot' },
     { key:'mavic',    sym:'◈', label:'Mavic' },
     { key:'artillery',sym:'★', label:'Artillery' },
+    { key:'convoy',   sym:'🚛', label:'Convoy' },
   ];
 
   const terrainIcon = { forest:'🌿', urban:'🏚', field:'◌' };
