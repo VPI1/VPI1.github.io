@@ -1091,87 +1091,30 @@ const MANGAL_STATS = {
 };
 
 function soldierIcon(side, count, role = '', mangalHp = null) {
-  const W = 38, H = 24, B = 2.5;
-  const fill = side === 'blue' ? '#6ec6f5' : '#f26d6d';
-  const ink  = '#000';
-  const cx = W/2, cy = H/2;
-  const x1 = B, y1 = B, x2 = W - B, y2 = H - B;
-  let sym = '';
-  switch (role) {
-    case 'infantry': case 'sniper':
-      sym = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>` +
-            `<line x1="${x2}" y1="${y1}" x2="${x1}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>`;
-      break;
-    case 'medic':
-      sym = `<rect x="${x1}" y="${y1}" width="${W-2*B}" height="${H-2*B}" fill="white"/>` +
-            `<line x1="${cx}" y1="${y1+3}" x2="${cx}" y2="${y2-3}" stroke="#e53935" stroke-width="3.5"/>` +
-            `<line x1="${x1+5}" y1="${cy}" x2="${x2-5}" y2="${cy}" stroke="#e53935" stroke-width="3.5"/>`;
-      break;
-    case 'engineer':
-      sym = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>` +
-            `<line x1="${x2}" y1="${y1}" x2="${x1}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>` +
-            `<rect x="${cx-4}" y="${y2-6}" width="8" height="5" fill="${ink}"/>`;
-      break;
-    case 'recon':
-      sym = `<line x1="${x1}" y1="${y2}" x2="${x2}" y2="${y1}" stroke="${ink}" stroke-width="2.5"/>`;
-      break;
-    case 'hq':
-      sym = `<line x1="${cx}" y1="${y1}" x2="${cx}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>` +
-            `<polyline points="${cx},${y1} ${x2-4},${cy-3} ${cx},${cy-3}" fill="none" stroke="${ink}" stroke-width="2"/>`;
-      break;
-    case 'tank':
-      sym = `<ellipse cx="${cx}" cy="${cy}" rx="${(W-12)/2}" ry="${(H-12)/2}" fill="none" stroke="${ink}" stroke-width="2.5"/>`;
-      break;
-    case 'ifv':
-      sym = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="2"/>` +
-            `<line x1="${x2}" y1="${y1}" x2="${x1}" y2="${y2}" stroke="${ink}" stroke-width="2"/>` +
-            `<ellipse cx="${cx}" cy="${cy}" rx="${(W-18)/2}" ry="${(H-16)/2}" fill="${fill}" stroke="${ink}" stroke-width="2"/>`;
-      break;
-    case 'apc':
-      sym = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="2"/>` +
-            `<line x1="${x2}" y1="${y1}" x2="${x1}" y2="${y2}" stroke="${ink}" stroke-width="2"/>` +
-            `<line x1="${x1+3}" y1="${y2-5}" x2="${x2-3}" y2="${y2-5}" stroke="${ink}" stroke-width="2.5"/>`;
-      break;
-    case 'artillery':
-      sym = `<circle cx="${cx}" cy="${cy}" r="${(H-12)/2}" fill="${ink}"/>`;
-      break;
-    case 'mortar':
-      sym = `<circle cx="${cx}" cy="${cy}" r="${(H-14)/2}" fill="none" stroke="${ink}" stroke-width="2.5"/>`;
-      break;
-    case 'drone': case 'mavic':
-      sym = `<polygon points="${x1+2},${y1+5} ${cx},${cy+4} ${x2-2},${y1+5} ${x2-8},${y1+5} ${cx},${cy} ${x1+8},${y1+5}" fill="${ink}"/>`;
-      break;
-    case 'fpv':
-      sym = `<polygon points="${x1+2},${y1+5} ${cx},${cy+4} ${x2-2},${y1+5} ${x2-8},${y1+5} ${cx},${cy} ${x1+8},${y1+5}" fill="${ink}"/>` +
-            `<circle cx="${cx}" cy="${cy+4}" r="3" fill="${fill}" stroke="${ink}" stroke-width="1.5"/>`;
-      break;
-    default:
-      sym = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>` +
-            `<line x1="${x2}" y1="${y1}" x2="${x1}" y2="${y2}" stroke="${ink}" stroke-width="2.5"/>`;
-  }
-  const lbl = role ? ROLES[role]?.label ?? role : '';
-  const extraW = mangalHp > 0 ? 10 : 0;
-  const totalH = H + 11 + (lbl ? 12 : 0);
-  const _mangalOutline = mangalHp > 0 ? ';outline:2px dashed #ff9500;outline-offset:2px' : '';
+  const sz     = count >= 4 ? 32 : 26;
+  const cls    = side === 'blue' ? 'blue-marker' : 'red-marker';
+  const lbl    = role ? ROLES[role]?.label ?? role : '';
+  const sym    = ROLE_SYMBOLS[role] ?? '';
+  const accent = (ROLE_ACCENT[role]?.[side]) ?? (side === 'blue' ? '#90caf9' : '#ef9a9a');
+  const innerHtml = sym
+    ? `<span style="font-size:${sz < 30 ? 9 : 11}px;line-height:1;display:block;color:${accent};margin-bottom:-1px">${sym}</span><span style="font-size:${sz < 30 ? 10 : 12}px;font-weight:700;line-height:1">${count}</span>`
+    : `${count}`;
+  const _mangalBorder = mangalHp > 0 ? `;outline:2px dashed #ff9500;outline-offset:2px` : '';
   const _mangalBadge = mangalHp > 0
-    ? `<div style="position:absolute;top:-7px;right:-10px;background:#ff9500;color:#000;font-size:7px;font-weight:900;padding:1px 3px;border-radius:2px;line-height:1;min-width:14px;text-align:center">⧦${mangalHp}</div>`
+    ? `<div style="position:absolute;top:-6px;right:-8px;background:#ff9500;color:#000;font-size:7px;font-weight:900;padding:1px 3px;border-radius:2px;line-height:1;min-width:14px;text-align:center">⧦${mangalHp}</div>`
     : '';
   return L.divIcon({
     className: '',
     html: `<div style="display:flex;flex-direction:column;align-items:center;gap:1px">
-      <div style="position:relative;display:inline-block${_mangalOutline}">
-        <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">
-          <rect x="0" y="0" width="${W}" height="${H}" fill="${fill}" stroke="${ink}" stroke-width="${B}"/>
-          ${sym}
-        </svg>
-        <div style="position:absolute;bottom:-11px;left:0;right:0;text-align:center;font-size:9px;font-weight:800;color:#fff;text-shadow:0 0 3px #000,0 0 3px #000;line-height:1">${count}</div>
+      <div style="position:relative;display:inline-block">
+        <div class="soldier-marker ${cls}" style="width:${sz}px;height:${sz}px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-color:${accent};box-shadow:0 0 0 1px ${accent}44${_mangalBorder}">${innerHtml}</div>
         ${_mangalBadge}
       </div>
-      ${lbl ? `<div style="font-size:8px;font-weight:700;color:#fff;text-shadow:0 1px 3px #000;white-space:nowrap;letter-spacing:.2px;margin-top:11px">${lbl}</div>` : ''}
+      ${lbl ? `<div style="font-size:8px;font-weight:700;color:#fff;text-shadow:0 1px 3px #000;white-space:nowrap;letter-spacing:.2px">${lbl}</div>` : ''}
     </div>`,
-    iconSize: [W + extraW, totalH],
-    iconAnchor: [(W + extraW)/2, H/2],
-    popupAnchor: [0, -H/2 - 4]
+    iconSize: [sz + (mangalHp > 0 ? 8 : 0), sz + (lbl ? 13 : 0)],
+    iconAnchor: [(sz + (mangalHp > 0 ? 8 : 0))/2, sz/2],
+    popupAnchor: [0, -sz/2 - 4]
   });
 }
 
@@ -6187,7 +6130,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDT';
+const VERSION = '2026-09-06-CDU';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
