@@ -1092,7 +1092,7 @@ const VEH_DISMOUNT_MS = 12000;
 // installSec: game-time seconds to install (divide by TIME_SCALE for real seconds)
 const VEHICLE_GUN = {
   tank: {
-    dmgPerShot: 5, baseHit: 0.40, armorPen: 0.88, mangalPenalty: 0.55,
+    dmgPerShot: 5, baseHit: 0.65, armorPen: 0.97, mangalPenalty: 0.55,
     rangeM: 1500, burstRounds: 1, ammoPerBurst: 1, vehDmg: 2,
     coaxDmg: 1, coaxHit: 0.55, vsInfMult: 1.4,
     label: '125mm 2A46M',
@@ -2929,19 +2929,7 @@ function _buildActTab(m, now, moving) {
     }
   }
 
-  // Merge button — shown when a nearby same-side/same-role unit exists
-  let mergeTarget = null, mergeDist = 0;
-  for (const other of allMarkers) {
-    if (other === m || other._side !== m._side || other._role !== m._role || movingMarkers.has(other)) continue;
-    const d = Math.round(segMeters(markerPos(m), markerPos(other)));
-    if (d <= MERGE_DIST_M) { mergeTarget = other; mergeDist = d; break; }
-  }
-  if (mergeTarget) {
-    const total = m._count + mergeTarget._count;
-    h += `<div style="margin-top:8px;border-top:1px solid rgba(255,165,0,0.3);padding-top:8px">`;
-    h += _pb(`Merge with nearby unit (→ ${total} · ${mergeDist}m away)`, '⊕', 'tac', "_pa('merge')");
-    h += `</div>`;
-  }
+
 
   h += `<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.04);padding-top:8px">`;
   h += _pb('Disband Unit', '✕', 'atk', "_pa('disband')");
@@ -3279,12 +3267,6 @@ window._pa = function(action) {
   } else if (action === 'adj+1') {
     pendingSplitCount = Math.min(m._count, (pendingSplitCount ?? m._count) + 1);
     renderPanel();
-  } else if (action === 'merge') {
-    const target = allMarkers.find(other =>
-      other !== m && other._side === m._side && other._role === m._role &&
-      !movingMarkers.has(other) && segMeters(markerPos(m), markerPos(other)) <= MERGE_DIST_M
-    );
-    if (target) mergeUnits(m, target);
   } else if (action === 'disband') {
     if (confirm(`Disband this ${m._role} unit (${m._count} soldiers)?`)) {
       clearRoute(m);
@@ -3795,6 +3777,7 @@ function startFight(attacker, defender) {
   // This reveals the attacker to the defender so they can return fire.
   attacker._spottedUntil = Math.max(attacker._spottedUntil ?? 0, now_sf + 300000 / TIME_SCALE);
   if (!attacker._lastKnownPos) attacker._lastKnownPos = markerPos(attacker);
+  fbSyncAnyUnit(attacker); // broadcast spotted state so enemy can see muzzle flash
   if (_isSurprise) {
     unitLog(attacker, `SURPRISE ATTACK on ${ROLES[defender._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — undetected opening fire`);
     unitLog(defender, `AMBUSHED by ${ROLES[attacker._role]?.label ?? 'enemy'} at ${Math.round(distM)}m — not detected, scrambling… (attacker spotted from muzzle flash)`);
@@ -4385,8 +4368,9 @@ function spawnBullets(a, b) {
   if (VEHICLE_GUN[a._role]) {
     const isHE = (a._ammoType ?? 'AP') !== 'AP';
     const j = () => (Math.random() - 0.5) * 0.0002;
-    const marker = L.marker(posA, { icon: shellProjectileIcon(isHE), zIndexOffset: 400, interactive: false }).addTo(map);
-    flyingBullets.push({ marker, lat: posA[0], lng: posA[1], dstLat: posB[0] + j(), dstLng: posB[1] + j(), born: Date.now(), lifetime: 700, explode: true, explodeR: isHE ? 25 : 6 });
+    const speed = isHE ? 350 : 900; // m/s: HE shell slower, APFSDS very fast
+    const marker = L.marker(posA, { icon: shellIcon(isHE), zIndexOffset: 400, interactive: false }).addTo(map);
+    flyingShells.push({ marker, lat: posA[0], lng: posA[1], dstLat: posB[0] + j(), dstLng: posB[1] + j(), speed, unit: a, _isVehicle: true, _isHE: isHE });
     return;
   }
   for (let i = 0; i < 3; i++) {
@@ -4557,6 +4541,8 @@ function doEmbark(infantry, vehicle) {
     if (_idx >= 0) allMarkers.splice(_idx, 1);
     map.removeLayer(infantry);
     if (activePanel === infantry) closePanel();
+    fbRemoveUnit(infantry); // remove infantry from Firebase on all clients
+    _fbKillUnit(infantry);  // broadcast kill to avoid race with snapshot
     fbSyncUnit(vehicle);
     if (activePanel === vehicle) renderPanel();
   }, _boardMs);
@@ -5144,10 +5130,15 @@ setInterval(() => {
     if (dist <= step) {
       map.removeLayer(s.marker);
       flyingShells.splice(i, 1);
-      const isMortar = s.unit._role === 'mortar';
       const impactLatlng = L.latLng(s.dstLat, s.dstLng);
-      showExplosion(impactLatlng, isMortar ? 55 : 90);
-      showCrater(impactLatlng, isMortar ? 'mortar' : 'shell');
+      if (s._isVehicle) {
+        showExplosion(impactLatlng, s._isHE ? 38 : 14);
+        if (s._isHE) showCrater(impactLatlng, 'mortar');
+      } else {
+        const isMortar = s.unit._role === 'mortar';
+        showExplosion(impactLatlng, isMortar ? 55 : 90);
+        showCrater(impactLatlng, isMortar ? 'mortar' : 'shell');
+      }
     } else {
       const r = step / dist;
       s.lat += (s.dstLat - s.lat) * r;
@@ -6644,7 +6635,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CEC-1';
+const VERSION = '2026-09-14-CED';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6744,9 +6735,7 @@ function openGHConfig() {
   document.body.appendChild(panel);
 }
 
-const MERGE_DIST_M = 50; // meters — units must be within this distance to merge
 
-function updateMergeBadges() {} // no-op — merge is handled via the unit panel button
 
 function tdpSpawn(dp, now) {
   const dpPos = [dp.marker.getLatLng().lat, dp.marker.getLatLng().lng];
@@ -6789,30 +6778,6 @@ function tdpSpawn(dp, now) {
   }
 }
 
-function mergeUnits(a, b) {
-  if (['artillery','mavic','fpv'].includes(a._role)) {
-    showToast(`${ROLES[a._role]?.label ?? a._role} crews cannot merge — specialised units`, '#ef5350'); return;
-  }
-  const newCount = a._count + b._count;
-  const keepPos  = markerPos(a);
-  // Remove both, create merged unit
-  clearRoute(a); clearRoute(b);
-  if (activePanel === a || activePanel === b) closePanel();
-  map.removeLayer(a); allMarkers.splice(allMarkers.indexOf(a), 1);
-  map.removeLayer(b); allMarkers.splice(allMarkers.indexOf(b), 1);
-  fbRemoveUnit(a); fbRemoveUnit(b);
-  const merged = createMarker(keepPos, a._side, newCount, a._role);
-  // Combine ammo
-  merged._maxAmmo = (a._maxAmmo ?? 0) + (b._maxAmmo ?? 0);
-  merged._ammo    = Math.min((a._ammo ?? 0) + (b._ammo ?? 0), merged._maxAmmo || 999);
-  if (a._soldiers && b._soldiers) {
-    merged._soldiers = [...a._soldiers, ...b._soldiers].map((s, i) => ({ ...s, id: i }));
-  }
-  selectForRoute(merged);
-  fbSyncUnit(merged);
-  saveState();
-  showToast(`Merged into ${newCount} ${a._role}`, '#66bb6a');
-}
 
 function resetMap() {
   if (!confirm('Reset map? All units, routes, TDPs and drawings will be wiped for both sides.')) return;
