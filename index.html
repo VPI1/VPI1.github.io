@@ -1198,6 +1198,20 @@ function nearBridge(pt) {
   return false;
 }
 
+// Check if a vehicle route passes through an urban terrain polygon.
+function routeUrbanCrossing(points) {
+  for (let i = 0; i < points.length - 1; i++) {
+    const steps = 10;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const pt = [points[i][0]+(points[i+1][0]-points[i][0])*t,
+                  points[i][1]+(points[i+1][1]-points[i][1])*t];
+      if (terrainAt(pt) === 'urban') return true;
+    }
+  }
+  return false;
+}
+
 // Check if a route crosses water; skips crossings that are on a bridge.
 // Returns first crossing type ('water'|'river'|'stream') or null.
 function routeWaterCrossing(points, role) {
@@ -5311,6 +5325,13 @@ function assignRoute(marker, route) {
     updateFortBadge(marker);
     unitLog(marker, 'Left fortified position — marker left behind');
   }
+  // Urban check: armoured vehicles cannot enter built-up areas
+  if (terrainPolys.length > 0 && VEHICLE_ARMOR[marker._role]) {
+    if (routeUrbanCrossing(route)) {
+      showToast('Route blocked — vehicles cannot enter urban areas!', '#ef5350');
+      cancelDraw(); return;
+    }
+  }
   // Water crossing check (runs whenever map data is loaded)
   if (waterPolys.length > 0 || riverLines.length > 0) {
     const crossing = routeWaterCrossing(route, marker._role);
@@ -5587,9 +5608,15 @@ document.addEventListener('keydown', (e) => {
     const _fe = document.activeElement;
     if (_fe && (_fe.tagName === 'INPUT' || _fe.tagName === 'TEXTAREA')) return;
     if (activePanel && activePanel._count >= 2) {
-      pendingSplitCount = Math.ceil(activePanel._count / 2);
+      if (!pendingSplitCount || pendingSplitCount >= activePanel._count) {
+        pendingSplitCount = Math.ceil(activePanel._count / 2);
+      } else if (pendingSplitCount <= 1) {
+        pendingSplitCount = Math.ceil(activePanel._count / 2); // wrap back
+      } else {
+        pendingSplitCount = Math.max(1, Math.ceil(pendingSplitCount / 2));
+      }
       renderPanel();
-      showToast(`Half-split: ${pendingSplitCount}/${activePanel._count} — draw route to deploy`, '#ffd54f');
+      showToast(`Split: ${pendingSplitCount}/${activePanel._count} — draw route to deploy`, '#ffd54f');
       e.preventDefault();
     }
   }
@@ -6671,7 +6698,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CED-1';
+const VERSION = '2026-09-14-CEE';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
