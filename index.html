@@ -1135,11 +1135,13 @@ function soldierIcon(side, count, role = '', mangalHp = null) {
     ? `<div style="position:absolute;top:-6px;right:-8px;background:#ff9500;color:#000;font-size:7px;font-weight:900;padding:1px 3px;border-radius:2px;line-height:1;min-width:14px;text-align:center">⧦${mangalHp}</div>`
     : '';
   const _vhdg = VEHICLE_GUN[role] ? `<div class="veh-hdg" style="position:absolute;top:-${sz+5}px;left:50%;transform:translateX(-50%) rotate(0deg);font-size:${sz<30?9:11}px;color:${accent};pointer-events:none;line-height:1;text-shadow:0 1px 2px #000">▲</div>` : '';
+  const _vgun = VEHICLE_GUN[role] ? `<div class="veh-gun" style="position:absolute;top:50%;left:50%;width:${Math.round(sz*0.65)}px;height:2px;background:${accent};transform-origin:0 50%;transform:translate(0,-1px) rotate(-90deg);pointer-events:none;opacity:0.9;border-radius:1px;box-shadow:0 0 2px ${accent}88"></div>` : '';
   return L.divIcon({
     className: '',
     html: `<div style="display:flex;flex-direction:column;align-items:center;gap:1px">
       <div style="position:relative;display:inline-block">
         ${_vhdg}
+        ${_vgun}
         <div class="soldier-marker ${cls}" style="width:${sz}px;height:${sz}px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-color:${accent};box-shadow:0 0 0 1px ${accent}44${_mangalBorder}">${innerHtml}</div>
         ${_mangalBadge}
       </div>
@@ -2751,7 +2753,7 @@ function _buildActTab(m, now, moving) {
         h += _pb(`Cease Fire (defending vs ${ROLES[_vAtk._role]?.label ?? 'enemy'})`, '⬛', 'atk on', "_pa('disengage-def')");
       }
       h += _pb('Area Suppress · click ground', '⊛', 'sup', "_pa('area-suppress')", m._ammo<=0);
-      if (!_vAmmoAP) h += _pb('HE Ground Fire · click map', '⊟', 'atk', "_pa('he-ground')", m._ammo<=0);
+      h += _pb(`${_vAmmoAP ? 'AP' : 'HE'} Ground Fire · click map`, _vAmmoAP ? '⊞' : '⊟', 'atk', "_pa('he-ground')", m._ammo<=0);
       const _vHold = m._conds?.holdPos;
       h += _pb(_vHold ? 'Release Hold Position' : 'Hold Position', '⬙', _vHold?'on':'tac', "_pa('hold-toggle')");
     }
@@ -3578,6 +3580,11 @@ function fightTick(attacker, defender) {
   }
 
   const distM = segMeters(markerPos(attacker), markerPos(defender));
+  if (VEHICLE_GUN[attacker._role]) {
+    attacker._turretHdg = bearingDeg(markerPos(attacker), markerPos(defender));
+    const _gunEl = attacker.getElement()?.querySelector('.veh-gun');
+    if (_gunEl) _gunEl.style.transform = `translate(0,-1px) rotate(${(attacker._turretHdg - 90 + 360) % 360}deg)`;
+  }
   const maxRange = Math.max(unitRangeM(attacker), unitRangeM(defender), 1);
   // accuracy 1.0 at ≤50m, falls to ~0.15 at max range; fog/rain reduce further
   // drone crew ground combat — reduced training vs infantry (50% effectiveness)
@@ -3651,6 +3658,11 @@ function fightTick(attacker, defender) {
   const _aGun = VEHICLE_GUN[attacker._role];
   const _dArmor = VEHICLE_ARMOR[defender._role];
   const _aArmor = VEHICLE_ARMOR[attacker._role];
+  if (!_aGun && _dArmor) {
+    unitLog(attacker, `Small arms on ${defender._role.toUpperCase()} — no penetration`);
+    attacker._spottedUntil = Math.max(attacker._spottedUntil || 0, now + 8000 / TIME_SCALE);
+    fbSyncAnyUnit(attacker);
+  }
   if (_aGun || _dArmor) {
     if (_aGun) {
       // Range accuracy: degrades sharply beyond weapon's effective range
@@ -3675,10 +3687,16 @@ function fightTick(attacker, defender) {
         if (_dArmor) {
           // Vehicle-vs-vehicle: close range penetration bonus, long range penalty
           const _aPenMod = distM < _aGun.rangeM * 0.3 ? 1.20 : distM > _aGun.rangeM * 0.75 ? 0.70 : 1.0;
-          if (_rng() < _aGun.armorPen * _aArmorPenMod * _aPenMod * (1 - _dArmor.sa * 0.2)) {
+          const _dMangal = (defender._mangalHp > 0) ? (_aAmmoAP ? 0.90 : 0.25) : 1.0;
+          if (_rng() < _aGun.armorPen * _aArmorPenMod * _aPenMod * (1 - _dArmor.sa * 0.2) * _dMangal) {
             dCas = _aGun.vehDmg ?? 1;
             unitLog(attacker, `${_aGun.label} PENETRATED ${defender._role.toUpperCase()} — ${dCas} crew KIA`);
           } else {
+            if (defender._mangalHp > 0 && _dMangal < 1.0) {
+              defender._mangalHp = Math.max(0, defender._mangalHp - 1);
+              if (defender._mangalHp === 0) defender.setIcon(soldierIcon(defender._side, defender._count, defender._role, null));
+              unitLog(defender, `Mangal absorbed ${_aGun.label} hit — cage HP: ${defender._mangalHp}`);
+            }
             unitLog(attacker, `${_aGun.label} hit ${defender._role.toUpperCase()} — armour held`);
           }
         } else {
@@ -3686,6 +3704,7 @@ function fightTick(attacker, defender) {
           const _fr = FORT_COVER?.smallArms?.[defender._fortLevel ?? 0] ?? 0;
           dCas = Math.max(0, Math.round(_aGun.dmgPerShot * _aHits * (_aGun.vsInfMult ?? 1) * _aVsInfMod * (1 - _fr) * (0.7 + _rng() * 0.6)));
           if (dCas > 0) unitLog(attacker, `${_aGun.label} — ${_aBursts > 1 ? _aHits + '/' + _aBursts + ' rounds hit · ' : ''}inf −${dCas}`);
+          if (dCas > 0) { const _bdaR = distM < 300 ? 0.80 : distM < 800 ? 0.50 : 0.20; if (Math.random() < _bdaR) unitLog(attacker, `Gunner: observed −${dCas} inf eliminated`); }
           // Coax MG sweeping fire (tank PKT / IFV coax): bonus casualties on infantry
           if ((_aGun.coaxHit ?? 0) > 0 && _rng() < _aGun.coaxHit * _aCrew) {
             dCas += _aGun.coaxDmg ?? 0;
@@ -3712,10 +3731,16 @@ function fightTick(attacker, defender) {
         if (_dHits > 0) {
           if (_aArmor) {
             const _dPenMod = distM < _dGun.rangeM * 0.3 ? 1.20 : distM > _dGun.rangeM * 0.75 ? 0.70 : 1.0;
-            if (_rng() < _dGun.armorPen * _dArmorPenMod * _dPenMod * (1 - _aArmor.sa * 0.2)) {
+            const _aMangal = (attacker._mangalHp > 0) ? (_dAmmoAP ? 0.90 : 0.25) : 1.0;
+            if (_rng() < _dGun.armorPen * _dArmorPenMod * _dPenMod * (1 - _aArmor.sa * 0.2) * _aMangal) {
               aCas = _dGun.vehDmg ?? 1;
               unitLog(defender, `${_dGun.label} PENETRATED ${attacker._role.toUpperCase()} — ${aCas} crew KIA`);
             } else {
+              if (attacker._mangalHp > 0 && _aMangal < 1.0) {
+                attacker._mangalHp = Math.max(0, attacker._mangalHp - 1);
+                if (attacker._mangalHp === 0) attacker.setIcon(soldierIcon(attacker._side, attacker._count, attacker._role, null));
+                unitLog(attacker, `Mangal absorbed ${_dGun.label} hit — cage HP: ${attacker._mangalHp}`);
+              }
               unitLog(defender, `${_dGun.label} hit ${attacker._role.toUpperCase()} — armour held`);
             }
           } else {
@@ -3801,7 +3826,6 @@ function doInfantryAttack(attacker) {
     : unitRangeM(attacker) / 1000;
   const enemies = findEnemiesInRange(attacker, rangeKm)
     .filter(e => e._spottedUntil > Date.now())
-    .filter(e => !(VEHICLE_ARMOR[e._role] && !VEHICLE_GUN[attacker._role]))
     .sort((a,b) => segMeters(markerPos(attacker), markerPos(a)) - segMeters(markerPos(attacker), markerPos(b)));
   if (!enemies.length || attacker._ammo <= 0) { showToast('No spotted enemies in range or no ammo.', '#888'); return; }
   if (enemies.length === 1) {
@@ -4339,6 +4363,10 @@ function bulletIcon() {
   });
 }
 
+function shellProjectileIcon(isHE) {
+  const c = isHE ? '#ff8c00' : '#b0bec5';
+  return L.divIcon({ className: '', html: `<div style="width:8px;height:3px;background:${c};border-radius:2px;box-shadow:0 0 3px ${c}aa"></div>`, iconSize: [8,3], iconAnchor: [4,1] });
+}
 function launchShell(unit, pending) {
   const isMortar = unit._role === 'mortar';
   const from = markerPos(unit);
@@ -4352,6 +4380,13 @@ function launchShell(unit, pending) {
 
 function spawnBullets(a, b) {
   const posA = markerPos(a), posB = markerPos(b);
+  if (VEHICLE_GUN[a._role]) {
+    const isHE = (a._ammoType ?? 'AP') !== 'AP';
+    const j = () => (Math.random() - 0.5) * 0.0002;
+    const marker = L.marker(posA, { icon: shellProjectileIcon(isHE), zIndexOffset: 400, interactive: false }).addTo(map);
+    flyingBullets.push({ marker, lat: posA[0], lng: posA[1], dstLat: posB[0] + j(), dstLng: posB[1] + j(), born: Date.now(), lifetime: 700, explode: true, explodeR: isHE ? 25 : 6 });
+    return;
+  }
   for (let i = 0; i < 3; i++) {
     const [fromLat, fromLng] = i % 2 === 0 ? posA : posB;
     const [toLat, toLng]     = i % 2 === 0 ? posB : posA;
@@ -5124,8 +5159,17 @@ setInterval(() => {
   for (let i = flyingBullets.length - 1; i >= 0; i--) {
     const b = flyingBullets[i];
     const age = now_b - b.born;
-    if (age > 1500) { map.removeLayer(b.marker); flyingBullets.splice(i, 1); continue; }
-    const progress = age / 1500;
+    const _bLife = b.lifetime ?? 1500;
+    if (age > _bLife) {
+      map.removeLayer(b.marker);
+      if (b.explode) {
+        const _ec = b.explodeR > 10 ? '#ff8c00' : '#cfd8dc';
+        const _ex = L.circle([b.dstLat, b.dstLng], { radius: b.explodeR, color: _ec, fill: true, fillColor: _ec, fillOpacity: 0.45, weight: 1.5, opacity: 0.85, interactive: false }).addTo(map);
+        setTimeout(() => { try { map.removeLayer(_ex); } catch(e){} }, Math.max(600, 1500 / TIME_SCALE));
+      }
+      flyingBullets.splice(i, 1); continue;
+    }
+    const progress = age / _bLife;
     const lat = b.lat + (b.dstLat - b.lat) * progress;
     const lng = b.lng + (b.dstLng - b.lng) * progress;
     b.marker.setLatLng([lat, lng]);
@@ -5754,7 +5798,7 @@ setInterval(() => {
             // Building wall on LOS — covers target inside building AND building as obstacle
             if (_losBuildingOnPath(mPt, ePt)) continue;
             // More than one treeline between observer and target — summer foliage too thick
-            if (_losForestCrossings(mPt, ePt) > 1) continue;
+            if (dist > 100 && _losForestCrossings(mPt, ePt) > 1) continue;
           }
           // Summer foliage: dense canopy makes treelines very hard to see through
           const eTerrain = terrainAt(ePt);
@@ -6066,17 +6110,17 @@ function createMarker(pt, side, count, role = '') {
   else if (role === 'tank') {
     m._count = (count > 0) ? count : 3; m._maxAmmo = 30; m._ammo = 20 + Math.floor(Math.random() * 10);
     m._soldiers = (VEHICLE_CREW_ROLES[role] ?? ['commander','driver']).slice(0, m._count).map((cr, i) => ({id:i, role:cr, alive:true, ammo:0}));
-    m._passengers = []; m._dismountingAt = 0; m._ammoType = 'AP'; m._fireMode = (role === 'tank' ? 'single' : 'auto'); m._heading = 0;
+    m._passengers = []; m._dismountingAt = 0; m._ammoType = 'AP'; m._fireMode = (role === 'tank' ? 'single' : 'auto'); m._heading = 0; m._turretHdg = 0;
   }
   else if (role === 'ifv') {
     m._count = (count > 0) ? count : 3; m._maxAmmo = 500; m._ammo = 350 + Math.floor(Math.random() * 150);
     m._soldiers = (VEHICLE_CREW_ROLES[role] ?? ['commander','driver']).slice(0, m._count).map((cr, i) => ({id:i, role:cr, alive:true, ammo:0}));
-    m._passengers = []; m._dismountingAt = 0; m._ammoType = 'AP'; m._fireMode = (role === 'tank' ? 'single' : 'auto'); m._heading = 0;
+    m._passengers = []; m._dismountingAt = 0; m._ammoType = 'AP'; m._fireMode = (role === 'tank' ? 'single' : 'auto'); m._heading = 0; m._turretHdg = 0;
   }
   else if (role === 'apc') {
     m._count = (count > 0) ? count : 3; m._maxAmmo = 400; m._ammo = 300 + Math.floor(Math.random() * 100);
     m._soldiers = (VEHICLE_CREW_ROLES[role] ?? ['commander','driver']).slice(0, m._count).map((cr, i) => ({id:i, role:cr, alive:true, ammo:0}));
-    m._passengers = []; m._dismountingAt = 0; m._ammoType = 'AP'; m._fireMode = (role === 'tank' ? 'single' : 'auto'); m._heading = 0;
+    m._passengers = []; m._dismountingAt = 0; m._ammoType = 'AP'; m._fireMode = (role === 'tank' ? 'single' : 'auto'); m._heading = 0; m._turretHdg = 0;
   }
   allMarkers.push(m);
   m.addTo(map);
@@ -6598,7 +6642,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CEB';
+const VERSION = '2026-09-14-CEC';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
