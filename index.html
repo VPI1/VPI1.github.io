@@ -1556,6 +1556,8 @@ let _markerClickAt = 0; // timestamp of last marker click, to block map-click fr
 const movingMarkers = new Map();
 let clickTimer = null;
 let pendingSplitCount = null;
+let selectedMarkers = new Set();
+let _selBoxStart = null, _selBox = null, _selBoxMoved = false;
 let activePanel = null;
 const allMarkers = [];
 
@@ -2711,6 +2713,16 @@ function _buildActTab(m, now, moving) {
           const _prl = ROLES[p.role]?.label ?? p.role ?? 'Infantry';
           const _pCol = (p.count ?? 0) < 2 ? '#ef9a9a' : (p.count ?? 0) < 4 ? '#ffa726' : '#81c784';
           h += `<div class="pb-note" style="color:${_pCol}">${_prl} · ${p.count} troops</div>`;
+          if (p.soldiers?.length) {
+            for (const _s of p.soldiers) {
+              const _sAlive = _s.alive !== false;
+              const _sWounded = _sAlive && _s.hp != null && _s.hp < 50;
+              const _sIcon = !_sAlive ? '☠' : _sWounded ? '⚠' : '✓';
+              const _sCol2 = !_sAlive ? '#ef5350' : _sWounded ? '#ffa726' : '#81c784';
+              const _sStat = !_sAlive ? 'KIA' : _sWounded ? 'WIA' : 'OK';
+              h += `<div class="pb-note" style="color:${_sCol2};margin-left:10px;font-size:0.82em">${_sIcon} Soldier ${(_s.id ?? 0) + 1} — ${_sStat}</div>`;
+            }
+          }
         }
         if (m._dismountingAt > now) {
           h += `<div class="pb-note" style="color:#ffa726">Dismounting… ${Math.ceil((m._dismountingAt-now)/1000)}s</div>`;
@@ -3521,7 +3533,7 @@ function applySupply(unit) {
     const dp = nearestDepPoint(unit._side, role, markerPos(unit));
     if (dp) {
       const spawnPos = dp.marker.getLatLng();
-      const spawnCount = (role === 'infantry') ? 4 : 1;
+      const spawnCount = 1;
       const newUnit = createMarker([spawnPos.lat, spawnPos.lng], unit._side, spawnCount, role);
       const roleLabel = ROLES[role]?.label ?? role;
       unitLog(newUnit, `${roleLabel} unit spawned at ${dp.role === 'all' ? 'general' : dp.role} deployment point`);
@@ -4540,26 +4552,52 @@ function doEmbark(infantry, vehicle) {
   const _aboard = vehicle._passengers?.reduce((s,p)=>s+(p.count??0),0) ?? 0;
   if (_aboard >= _cap) { showToast('Vehicle at capacity.', '#888'); return; }
   if (activeFights.has(infantry)) { showToast('Cannot board while in combat.', '#ef9a9a'); return; }
-  const _boardMs = 8000 / TIME_SCALE;
-  showToast(`Boarding… ${Math.round(_boardMs/1000)}s`, '#ffd54f');
-  unitLog(infantry, `Boarding ${ROLES[vehicle._role]?.label ?? 'vehicle'} (∝${Math.round(_boardMs/1000)}s)`);
-  renderPanel();
-  setTimeout(() => {
+  const _totalCount = infantry._count;
+  const _perMs = Math.max(600, Math.round(5000 / TIME_SCALE));
+  const _totalMs = _perMs * _totalCount;
+  showToast(`Boarding… ${Math.round(_totalMs / 1000)}s`, '#ffd54f');
+  unitLog(infantry, `Boarding ${ROLES[vehicle._role]?.label ?? 'vehicle'} (∝${Math.round(_totalMs / 1000)}s)`);
+  const _solList = infantry._soldiers ? [...infantry._soldiers] : [];
+  let _boarded = 0;
+  function _boardOne() {
     if (!allMarkers.includes(infantry) || !allMarkers.includes(vehicle)) return;
+    const _sol = _solList[_boarded] ?? { id: _boarded, alive: true, hp: 100 };
+    _boarded++;
     vehicle._passengers = vehicle._passengers ?? [];
     const _ex = vehicle._passengers.find(p => p.role === infantry._role);
-    if (_ex) _ex.count = (_ex.count ?? 0) + infantry._count;
-    else vehicle._passengers.push({ role: infantry._role, count: infantry._count });
-    unitLog(vehicle, `${infantry._count} ${ROLES[infantry._role]?.label ?? 'troops'} boarded`);
-    const _idx = allMarkers.indexOf(infantry);
-    if (_idx >= 0) allMarkers.splice(_idx, 1);
-    map.removeLayer(infantry);
-    if (activePanel === infantry) closePanel();
-    fbRemoveUnit(infantry); // remove infantry from Firebase on all clients
-    _fbKillUnit(infantry);  // broadcast kill to avoid race with snapshot
+    if (_ex) {
+      _ex.count = (_ex.count ?? 0) + 1;
+      if (!_ex.soldiers) _ex.soldiers = [];
+      _ex.soldiers.push(_sol);
+    } else {
+      vehicle._passengers.push({ role: infantry._role, count: 1, soldiers: [_sol] });
+    }
+    if (_boarded >= _totalCount) {
+      unitLog(vehicle, `${_totalCount} ${ROLES[infantry._role]?.label ?? 'troops'} boarded`);
+      const _idx = allMarkers.indexOf(infantry);
+      if (_idx >= 0) allMarkers.splice(_idx, 1);
+      map.removeLayer(infantry);
+      if (activePanel === infantry) closePanel();
+      fbRemoveUnit(infantry);
+      _fbKillUnit(infantry);
+    } else {
+      infantry._count -= 1;
+      const _el = infantry.getElement();
+      if (_el) {
+        _el.style.transition = `opacity ${Math.round(_perMs * 0.35)}ms`;
+        _el.style.opacity = '0.2';
+        setTimeout(() => { if (_el.isConnected) { _el.style.opacity = '1'; _el.style.transition = ''; } }, Math.round(_perMs * 0.35));
+      }
+      if (activePanel === infantry) renderPanel();
+      setTimeout(_boardOne, _perMs);
+    }
     fbSyncUnit(vehicle);
     if (activePanel === vehicle) renderPanel();
-  }, _boardMs);
+  }
+  renderPanel();
+  const _startEl = infantry.getElement();
+  if (_startEl) { _startEl.style.transition = `opacity ${Math.round(_perMs * 0.3)}ms`; _startEl.style.opacity = '0.55'; }
+  setTimeout(_boardOne, _perMs);
 }
 
 // Fan out units that share the same ~20m grid cell so they're individually selectable
@@ -5569,9 +5607,50 @@ map.on('mousemove', (e) => {
 document.getElementById('ruler-btn').addEventListener('click', toggleRuler);
 document.getElementById('annotate-btn').addEventListener('click', toggleAnnotate);
 
+map.on('mousedown', (e) => {
+  if (!e.originalEvent.shiftKey) return;
+  if (drawMode || rulerMode || annotateMode || patrolMode || convoyRouteMode ||
+      _adminPlacing || _placingDeployPoint || _drawingDeployRoute || _settingFallback ||
+      boundingState || searchAreaMode || combatMode) return;
+  map.dragging.disable();
+  if (map.boxZoom) map.boxZoom.disable();
+  _selBoxStart = e.latlng;
+  _selBoxMoved = false;
+  L.DomEvent.preventDefault(e.originalEvent);
+});
+map.on('mousemove', (e) => {
+  if (!_selBoxStart) return;
+  const _dx = Math.abs(e.latlng.lat - _selBoxStart.lat) + Math.abs(e.latlng.lng - _selBoxStart.lng);
+  if (_dx > 0.00005) _selBoxMoved = true;
+  if (!_selBoxMoved) return;
+  const _rb = L.latLngBounds(_selBoxStart, e.latlng);
+  if (_selBox) { _selBox.setBounds(_rb); }
+  else { _selBox = L.rectangle(_rb, { color: '#ffeb3b', weight: 1.5, fillOpacity: 0.07, dashArray: '6 4', interactive: false }).addTo(map); }
+});
+map.on('mouseup', (e) => {
+  if (!_selBoxStart) return;
+  map.dragging.enable();
+  if (map.boxZoom) map.boxZoom.enable();
+  const _start = _selBoxStart;
+  _selBoxStart = null;
+  if (_selBox) { map.removeLayer(_selBox); _selBox = null; }
+  if (!_selBoxMoved) return;
+  const _rb = L.latLngBounds(_start, e.latlng);
+  let _cnt = 0;
+  allMarkers.forEach(m => {
+    if (m._side !== userSide) return;
+    if (_rb.contains(m.getLatLng())) {
+      selectedMarkers.add(m);
+      m.getElement()?.style.setProperty('outline', '2px solid #ffeb3b');
+      _cnt++;
+    }
+  });
+  if (_cnt > 0) showToast(_cnt + ' unit(s) selected — draw route or shift+click more', '#ffd54f');
+});
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     clearTimeout(clickTimer); clickTimer = null;
+    if (selectedMarkers.size) { selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline')); selectedMarkers.clear(); return; }
     if (convoyRouteMode) { cancelConvoyRoute(); return; }
     if (patrolMode) { cancelPatrol(); return; }
     if (_placingDeployPoint) { _placingDeployPoint = false; document.getElementById('dep-btn').classList.remove('ruler-on'); setStatus(''); return; }
@@ -5600,7 +5679,19 @@ document.addEventListener('keydown', (e) => {
     if (searchAreaMode && searchAreaPoints.length >= 3) { finishSearchArea(); return; }
     if (drawMode && drawPoints.length >= 2) {
       clearTimeout(clickTimer); clickTimer = null;
-      assignRoute(activeMarker, [...drawPoints]); saveState();
+      assignRoute(activeMarker, [...drawPoints]);
+      if (selectedMarkers.size > 0) {
+        let _selOff = 1;
+        selectedMarkers.forEach(sm => {
+          if (sm !== activeMarker) {
+            assignRoute(sm, drawPoints.map(p => [p[0] + _selOff * 0.00006, p[1] + _selOff * 0.00006]));
+            _selOff++;
+          }
+        });
+        selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline'));
+        selectedMarkers.clear();
+      }
+      saveState();
       cancelDraw(); closePanel();
     }
   }
@@ -5611,7 +5702,7 @@ document.addEventListener('keydown', (e) => {
       if (!pendingSplitCount || pendingSplitCount >= activePanel._count) {
         pendingSplitCount = Math.ceil(activePanel._count / 2);
       } else if (pendingSplitCount <= 1) {
-        pendingSplitCount = Math.ceil(activePanel._count / 2); // wrap back
+        // already at minimum – do nothing
       } else {
         pendingSplitCount = Math.max(1, Math.ceil(pendingSplitCount / 2));
       }
@@ -6190,7 +6281,22 @@ function createMarker(pt, side, count, role = '') {
   if (side === userSide) {
     m.dragging.enable();
     m.on('dragend', () => { saveState(); fbSyncUnit(m); });
-    m.on('click', (e) => { e.originalEvent?.stopPropagation(); _markerClickAt = Date.now(); selectForRoute(m); });
+    m.on('click', (e) => {
+          e.originalEvent?.stopPropagation(); _markerClickAt = Date.now();
+          if (e.originalEvent?.shiftKey) {
+            if (selectedMarkers.has(m)) { selectedMarkers.delete(m); m.getElement()?.style.removeProperty('outline'); }
+            else { selectedMarkers.add(m); m.getElement()?.style.setProperty('outline', '2px solid #ffeb3b'); }
+            return;
+          }
+          if (selectedMarkers.size > 1 && selectedMarkers.has(m)) {
+            activeMarker = m; drawMode = true; drawPoints = [];
+            setStatus('Draw route for ' + selectedMarkers.size + ' selected units — Enter to confirm');
+            return;
+          }
+          selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline'));
+          selectedMarkers.clear();
+          selectForRoute(m);
+        });
   }
   return m;
 }
@@ -6395,6 +6501,7 @@ function fbPushMySide() {
         ammo: m._ammo != null ? m._ammo : null,
         hp: m._hp != null ? m._hp : null,
         mangalHp: m._mangalHp != null ? m._mangalHp : null,
+        passengers: m._passengers ? JSON.stringify(m._passengers) : null,
       };
     }
     var n = Object.keys(updates).length;
@@ -6430,6 +6537,7 @@ function fbSyncAnyUnit(m) {
     ammo: m._ammo != null ? m._ammo : null,
     hp: m._hp != null ? m._hp : null,
     mangalHp: m._mangalHp != null ? m._mangalHp : null,
+    passengers: m._passengers ? JSON.stringify(m._passengers) : null,
   }).catch(function() {});
 }
 
@@ -6496,6 +6604,7 @@ function fbApplyUnit(d) {
       existing._mangalHp = d.mangalHp;
       existing.setIcon(soldierIcon(existing._side, existing._count, existing._role, existing._mangalHp ?? null));
     }
+    if (d.passengers) { try { existing._passengers = JSON.parse(d.passengers); } catch(_pe) {} }
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     if ((d.count ?? 1) <= 0) return; // never recreate a unit with count 0
     if (_killedUidCache.has(d.uid)) return; // already destroyed this session
@@ -6506,6 +6615,7 @@ function fbApplyUnit(d) {
     if (d.ammo != null) m2._ammo = d.ammo;
     if (d.hp != null) m2._hp = d.hp;
     if (d.mangalHp != null) { m2._mangalHp = d.mangalHp; m2.setIcon(soldierIcon(m2._side, m2._count, m2._role, m2._mangalHp)); }
+    if (d.passengers) { try { m2._passengers = JSON.parse(d.passengers); } catch(_pe) {} }
     if (d.route && d.route.length >= 2) {
       var _rLine2Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
       var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine2Op}).addTo(map);
@@ -6698,7 +6808,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CEE';
+const VERSION = '2026-09-14-CEF';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7502,7 +7612,7 @@ async function main() {
       if (['fpv','mavic'].includes(role)) return 3 + Math.floor(Math.random() * 2); // 3-4
       if (role === 'artillery') return 3 + Math.floor(Math.random() * 3);           // 3-5
       if (role === 'mortar')    return 2 + Math.floor(Math.random() * 2);           // 2-3
-      return 2 + Math.floor(Math.random() * 4); // 2-5
+      return 1; // each infantry spawns as individual soldier
     }
 
     // per-role minimum separation (degrees) to avoid clustering
