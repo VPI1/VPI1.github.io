@@ -2631,6 +2631,28 @@ function _buildActTab(m, now, moving) {
       if (_canMangal) h += _pb(`Install Mangal Cage`, '⧦', 'tac', "_pa('mangal-install')");
       else h += `<div class="pb-note" style="color:#888;font-size:10px">Enemy vehicle — cannot install</div>`;
     }
+    if (m._side === userSide || _adminAuthed) {
+      const _vFight = activeFights.has(m);
+      const _vIncoming = [...activeFights.entries()].find(([,f]) => f.defender === m);
+      const _vGun = VEHICLE_GUN[m._role];
+      const _vRangeKm = (unitRangeM(m) / 1000).toFixed(2);
+      const _vEn = findEnemiesInRange(m, unitRangeM(m)/1000).filter(e => e._spottedUntil > now);
+      h += `<div class="psec">⊕ Direct Fire</div>`;
+      h += `<div class="pb-note" style="color:#888;font-size:10px">${_vGun?.label} · ${unitRangeM(m)}m eff. range${(_vGun?.burstRounds ?? 1) > 1 ? ' · ' + _vGun.burstRounds + '-rd burst' : ''}${m._immobilized ? ' · immobilized (aim +10%)' : ''}</div>`;
+      if (_vFight) {
+        const _vDef = activeFights.get(m).defender;
+        h += _pb(`Cease Fire (engaging ${ROLES[_vDef._role]?.label ?? 'enemy'})`, '⬛', 'atk on', "_pa('disengage')");
+      } else {
+        h += _pb(`Engage · ${_vRangeKm} km${_vEn.length ? ` · ${_vEn.length} target${_vEn.length>1?'s':''}` : ' · none spotted'}`, '⊕', 'atk', "_pa('attack')", !(m._ammo>0 && _vEn.length && m._count>0));
+      }
+      if (_vIncoming) {
+        const [_vAtk] = _vIncoming;
+        h += _pb(`Cease Fire (defending vs ${ROLES[_vAtk._role]?.label ?? 'enemy'})`, '⬛', 'atk on', "_pa('disengage-def')");
+      }
+      h += _pb('Area Suppress · click ground', '⊛', 'sup', "_pa('area-suppress')", m._ammo<=0);
+      const _vHold = m._conds?.holdPos;
+      h += _pb(_vHold ? 'Release Hold Position' : 'Hold Position', '⬙', _vHold?'on':'tac', "_pa('hold-toggle')");
+    }
   }
   if (m._role === 'fpv') {
     h += `<div class="psec">Strike</div>`;
@@ -6411,7 +6433,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CDY';
+const VERSION = '2026-09-14-CDZ';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
