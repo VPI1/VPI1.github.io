@@ -3523,27 +3523,67 @@ function fightTick(attacker, defender) {
   const _aArmor = VEHICLE_ARMOR[attacker._role];
   if (_aGun || _dArmor) {
     if (_aGun) {
-      const _mangalMiss = (attacker._mangalHp > 0) ? _aGun.mangalPenalty : 1.0;
-      const _hitP = _aGun.baseHit * (atkSup ? 0.5 : 1.0) * groundVisibilityFactor * _mangalMiss;
-      if (_rng() < _hitP) {
+      // Range accuracy: degrades sharply beyond weapon's effective range
+      const _aRangeF = Math.max(0.05, Math.min(1.0, 1.15 - Math.pow(distM / _aGun.rangeM, 1.5)));
+      // Crew degradation: fewer surviving crew = slower acquisition + reduced accuracy
+      const _aCrew = Math.max(0.25, attacker._count / (VEHICLE_ARMOR[attacker._role]?.crew ?? 3));
+      // Immobilized = stable platform: slight aim bonus (no hull vibration)
+      const _aImmMod = attacker._immobilized ? 1.10 : 1.0;
+      const _aMangal = (attacker._mangalHp > 0) ? _aGun.mangalPenalty : 1.0;
+      const _aHitP = _aGun.baseHit * _aRangeF * _aCrew * _aImmMod * _aMangal * (atkSup ? 0.5 : 1.0) * groundVisibilityFactor;
+      // Burst fire (IFV/APC): multiple rounds per tick; drain extra ammo
+      const _aBursts = _aGun.burstRounds ?? 1;
+      if (_aBursts > 1) attacker._ammo = Math.max(0, attacker._ammo - (_aBursts - 1));
+      let _aHits = 0;
+      for (let _b = 0; _b < _aBursts; _b++) { if (_rng() < _aHitP) _aHits++; }
+      if (_aHits > 0) {
         if (_dArmor) {
-          if (_rng() < _aGun.armorPen * (1 - _dArmor.sa * 0.2)) dCas = 1;
+          // Vehicle-vs-vehicle: close range penetration bonus, long range penalty
+          const _aPenMod = distM < _aGun.rangeM * 0.3 ? 1.20 : distM > _aGun.rangeM * 0.75 ? 0.70 : 1.0;
+          if (_rng() < _aGun.armorPen * _aPenMod * (1 - _dArmor.sa * 0.2)) {
+            dCas = _aGun.vehDmg ?? 1;
+            unitLog(attacker, `${_aGun.label} PENETRATED ${defender._role.toUpperCase()} — ${dCas} crew KIA`);
+          } else {
+            unitLog(attacker, `${_aGun.label} hit ${defender._role.toUpperCase()} — armour held`);
+          }
         } else {
+          // Vehicle gun vs infantry: burst rounds + vsInfMult multiply casualties
           const _fr = FORT_COVER?.smallArms?.[defender._fortLevel ?? 0] ?? 0;
-          dCas = Math.max(0, Math.round(_aGun.dmgPerShot * (1 - _fr) * (0.5 + _rng() * 1.0)));
+          dCas = Math.max(0, Math.round(_aGun.dmgPerShot * _aHits * (_aGun.vsInfMult ?? 1) * (1 - _fr) * (0.7 + _rng() * 0.6)));
+          if (dCas > 0) unitLog(attacker, `${_aGun.label} — ${_aBursts > 1 ? _aHits + '/' + _aBursts + ' rounds hit · ' : ''}inf −${dCas}`);
+          // Coax MG sweeping fire (tank PKT / IFV coax): bonus casualties on infantry
+          if ((_aGun.coaxHit ?? 0) > 0 && _rng() < _aGun.coaxHit * _aCrew) {
+            dCas += _aGun.coaxDmg ?? 0;
+          }
         }
       }
     }
     if (defResponding) {
       const _dGun = VEHICLE_GUN[defender._role];
       if (_dGun) {
-        const _dHitP = _dGun.baseHit * (defSup ? 0.4 : 1.0) * groundVisibilityFactor;
-        if (_rng() < _dHitP) {
+        const _dRangeF = Math.max(0.05, Math.min(1.0, 1.15 - Math.pow(distM / _dGun.rangeM, 1.5)));
+        const _dCrew = Math.max(0.25, defender._count / (VEHICLE_ARMOR[defender._role]?.crew ?? 3));
+        const _dImmMod = defender._immobilized ? 1.10 : 1.0;
+        const _dHitP = _dGun.baseHit * _dRangeF * _dCrew * _dImmMod * (defSup ? 0.4 : 1.0) * groundVisibilityFactor;
+        const _dBursts = _dGun.burstRounds ?? 1;
+        if (_dBursts > 1) defender._ammo = Math.max(0, defender._ammo - (_dBursts - 1));
+        let _dHits = 0;
+        for (let _b = 0; _b < _dBursts; _b++) { if (_rng() < _dHitP) _dHits++; }
+        if (_dHits > 0) {
           if (_aArmor) {
-            if (_rng() < _dGun.armorPen * (1 - _aArmor.sa * 0.2)) aCas = 1;
+            const _dPenMod = distM < _dGun.rangeM * 0.3 ? 1.20 : distM > _dGun.rangeM * 0.75 ? 0.70 : 1.0;
+            if (_rng() < _dGun.armorPen * _dPenMod * (1 - _aArmor.sa * 0.2)) {
+              aCas = _dGun.vehDmg ?? 1;
+              unitLog(defender, `${_dGun.label} PENETRATED ${attacker._role.toUpperCase()} — ${aCas} crew KIA`);
+            } else {
+              unitLog(defender, `${_dGun.label} hit ${attacker._role.toUpperCase()} — armour held`);
+            }
           } else {
             const _afr = FORT_COVER?.smallArms?.[attacker._fortLevel ?? 0] ?? 0;
-            aCas = Math.max(0, Math.round(_dGun.dmgPerShot * (1 - _afr) * (0.5 + _rng() * 1.0)));
+            aCas = Math.max(0, Math.round(_dGun.dmgPerShot * _dHits * (_dGun.vsInfMult ?? 1) * (1 - _afr) * (0.7 + _rng() * 0.6)));
+            if ((_dGun.coaxHit ?? 0) > 0 && _rng() < _dGun.coaxHit * _dCrew) {
+              aCas += _dGun.coaxDmg ?? 0;
+            }
           }
         }
       } else if (_dArmor && !_aArmor) {
@@ -6371,7 +6411,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CDX';
+const VERSION = '2026-09-14-CDY';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
