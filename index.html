@@ -4547,6 +4547,40 @@ function doEmbark(infantry, vehicle) {
     if (activePanel === vehicle) renderPanel();
   }, _boardMs);
 }
+
+// Fan out units that share the same ~20m grid cell so they're individually selectable
+let _spreadPending = false;
+function spreadColocatedMarkers() {
+  if (_spreadPending) return;
+  _spreadPending = true;
+  setTimeout(function() {
+    _spreadPending = false;
+    const BUCKET = 0.00018; // ~20m grid cell
+    const groups = new Map();
+    allMarkers.forEach(function(m) {
+      const pos = markerPos(m);
+      const key = Math.round(pos[0]/BUCKET) + ',' + Math.round(pos[1]/BUCKET);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    });
+    groups.forEach(function(grp) {
+      if (grp.length < 2) return;
+      // Sort by uid for deterministic ordering across clients
+      grp.sort(function(a,b) { return (a._uid||'').localeCompare(b._uid||''); });
+      const cLat = grp.reduce(function(s,m){ return s + markerPos(m)[0]; }, 0) / grp.length;
+      const cLng = grp.reduce(function(s,m){ return s + markerPos(m)[1]; }, 0) / grp.length;
+      const R = 0.00022; // ~25m radius
+      const cosLat = Math.cos(cLat * Math.PI / 180);
+      grp.forEach(function(m, i) {
+        const angle = (2 * Math.PI * i / grp.length) - Math.PI / 2;
+        const newLat = cLat + R * Math.cos(angle);
+        const newLng = cLng + (R / cosLat) * Math.sin(angle);
+        m.setLatLng([newLat, newLng]);
+        if (m._side === userSide && m._uid) fbSyncUnit(m);
+      });
+    });
+  }, 250);
+}
 function installMangal(m) {
   const ms = MANGAL_STATS[m._role];
   if (!ms || m._mangalHp > 0 || m._mangalInstalling) return;
@@ -5253,6 +5287,7 @@ function clearRoute(marker) {
   } else {
     fbSyncUnit(marker); // fallback broadcast
   }
+  spreadColocatedMarkers(); // fan out if arrived at occupied position
 }
 
 function assignRoute(marker, route) {
@@ -6391,6 +6426,7 @@ function fbApplySideSnapshot(side, all) {
     if (d.updatedAt && d.updatedAt < GLOBAL_RESET_TS) continue;
     fbApplyUnit(d);
   }
+  spreadColocatedMarkers(); // fan out any stacked units after state loads
 }
 
 function fbApplyUnit(d) {
@@ -6635,7 +6671,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CED';
+const VERSION = '2026-09-14-CED-1';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
