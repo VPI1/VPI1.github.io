@@ -2420,9 +2420,10 @@ function _buildStats(m, now) {
   let h = '<div class="pstats">';
   h += `<div class="pstat"><div class="pstat-l">Strength</div><div class="pstat-v">${m._count}</div></div>`;
   if (m._maxAmmo > 0) {
-    const p = m._ammo / m._maxAmmo;
+    const _da = Math.min(m._ammo ?? 0, m._maxAmmo);
+    const p = _da / m._maxAmmo;
     const col = p>0.5?'#66bb6a':p>0.25?'#ffa726':'#ef5350';
-    h += `<div class="pstat"><div class="pstat-l">Ammo</div><div class="pstat-v" style="color:${col}">${m._ammo}/${m._maxAmmo}</div></div>`;
+    h += `<div class="pstat"><div class="pstat-l">Ammo</div><div class="pstat-v" style="color:${col}">${_da}/${m._maxAmmo}</div></div>`;
   }
   if (m._role === 'fpv') h += `<div class="pstat"><div class="pstat-l">Drones</div><div class="pstat-v">${m._drones}</div></div>`;
   if (m._role === 'mavic') {
@@ -2452,6 +2453,14 @@ function _buildActTab(m, now, moving) {
   if (m._role === 'infantry') {
     h += `<div class="pmove">
       <button class="padj" onclick="_pa('adj-1')">−</button>
+      <span class="pmove-n">${sv}</span>
+      <span class="pmove-l">of ${m._count} · click map</span>
+      <button class="padj" onclick="_pa('adj+1')">+</button>
+    </div>`;
+  } else if (VEHICLE_ARMOR[m._role] && m._count >= 2) {
+    const sv = pendingSplitCount ?? m._count;
+    h += `<div class="pmove">
+      <button class="padj" onclick="_pa('adj-1')">&#x2212;</button>
       <span class="pmove-n">${sv}</span>
       <span class="pmove-l">of ${m._count} · click map</span>
       <button class="padj" onclick="_pa('adj+1')">+</button>
@@ -2577,9 +2586,9 @@ function _buildActTab(m, now, moving) {
     const _ms = MANGAL_STATS[m._role];
     const _fpvPct = m._mangalHp > 0 ? Math.round(_ms.deflect*100) : Math.round(_va.fpv*100);
     const _fpvNote = m._mangalHp > 0 ? ` (mangal)` : '';
-    h += `<div class="psec">Vehicle · ${ROLES[m._role]?.label ?? m._role}</div>`;
+    h += `<div class="psec">Vehicle · ${ROLES[m._role]?.label ?? m._role}${m._immobilized ? ' <span style="color:#ef5350;font-weight:700">⚠ IMMOBILIZED</span>' : ''}</div>`;
     h += `<div class="pb-note">${_va.gun}</div>`;
-    h += `<div class="pb-note">Crew: ${_va.crew}${_va.passengers > 0 ? ` · Dismount capacity: ${_va.passengers}` : ''}</div>`;
+    h += `<div class="pb-note">Crew: ${m._count}/${_va.crew}${_va.passengers > 0 ? ` · Dismount cap: ${_va.passengers}` : ''}${m._immobilized ? ' · <span style="color:#ef5350">immobilized</span>' : ''}</div>`;
     h += `<div class="pb-note">SA: ${Math.round(_va.sa*100)}% · FPV: ${_fpvPct}%${_fpvNote} · Art: ${Math.round(_va.art*100)}% protection</div>`;
     h += `<div class="pb-note" style="color:#90a4ae;font-size:10px">${_va.desc} · Road speed ${_va.speed_kmh} km/h</div>`;
     h += `<div class="pb-note" style="color:#aaa;font-size:10px">Thermal optics — ${unitRangeM(m)}m detection range</div>`;
@@ -2589,7 +2598,11 @@ function _buildActTab(m, now, moving) {
       const _paxCount = _pax.reduce((s, p) => s + (p.count ?? 0), 0);
       h += `<div class="psec">⬙ Passengers (${_paxCount}/${_cap})</div>`;
       if (_pax.length > 0) {
-        for (const p of _pax) h += `<div class="pb-note">${p.role ? (ROLES[p.role]?.label ?? p.role) : 'Infantry'} · ${p.count} troops</div>`;
+        for (const p of _pax) {
+          const _prl = ROLES[p.role]?.label ?? p.role ?? 'Infantry';
+          const _pCol = (p.count ?? 0) < 2 ? '#ef9a9a' : (p.count ?? 0) < 4 ? '#ffa726' : '#81c784';
+          h += `<div class="pb-note" style="color:${_pCol}">${_prl} · ${p.count} troops</div>`;
+        }
         if (m._dismountingAt > now) {
           h += `<div class="pb-note" style="color:#ffa726">Dismounting… ${Math.ceil((m._dismountingAt-now)/1000)}s</div>`;
         } else {
@@ -3266,7 +3279,7 @@ window._pa = function(action) {
       m._artPending = null;
     }
     m._taskQueue = [];
-    m._ammo = Math.min(m._ammo + 1, m._maxAmmo ?? m._ammo + 1); // refund the prepared shell
+    if (m._maxAmmo != null) m._ammo = Math.min(m._ammo + 1, m._maxAmmo); else m._ammo++; // refund the prepared shell
     unitLog(m, 'Fire mission cancelled');
     renderPanel();
   }
@@ -4373,16 +4386,44 @@ function applyFPVImpact(pilot, target, intercepted) {
       // FPV threaded through cage gap — ERA/armor check follows
       unitLog(pilot, `FPV threaded through mangal gap · ERA check follows`);
     }
-    if (Math.random() < _va.fpv) {
+    // Immobilized vehicles are stationary targets—easier to hit precisely
+    const _armorP = target._immobilized ? _va.fpv * 0.5 : _va.fpv;
+    if (Math.random() < _armorP) {
       unitLog(pilot, `FPV hit — ERA/armour deflected (${target._role.toUpperCase()}), no crew casualties`);
       unitLog(target, `FPV deflected by ${_va.desc.split('(')[0].trim()} — crew safe`);
       if (allMarkers.includes(pilot)) renderPanel();
       return;
     }
-    // Penetrating hit — catastrophic crew kill
-    const _killed = Math.ceil(target._count * (0.5 + Math.random() * 0.5));
-    const _destroyed = damageUnit(target, _killed);
-    unitLog(pilot, `FPV penetrating hit — ${target._role.toUpperCase()} ${_destroyed ? 'DESTROYED' : 'crew casualties ×' + _killed}`);
+    // Penetrating hit — roll for realistic outcome
+    const _froll = Math.random();
+    if (_froll < 0.25 && !target._immobilized) {
+      // Mobility kill: track/wheel destroyed
+      target._immobilized = true;
+      unitLog(pilot, `FPV MOBILITY KILL — ${target._role.toUpperCase()} track destroyed, cannot move`);
+      unitLog(target, `⚠ MOBILITY KILL — track destroyed, vehicle immobilized`);
+      showToast(`MOBILITY KILL — ${ROLES[target._role]?.label ?? 'Vehicle'} immobilized!`, '#ff9800');
+      saveState();
+    } else if (_froll < 0.45) {
+      // Partial penetration: crew wound
+      const _wnd = 1 + (Math.random() < 0.4 ? 1 : 0);
+      const _wdest = damageUnit(target, _wnd);
+      unitLog(pilot, `FPV partial penetration — ${target._role.toUpperCase()} crew WIA ×${_wnd}${_wdest ? ' · DESTROYED' : ''}`);
+      if (!_wdest) unitLog(target, `FPV warhead partial penetration — ${_wnd} crew WIA`);
+    } else if (_froll < 0.60) {
+      // Engine/fuel fire
+      const _aLoss = Math.floor((target._maxAmmo ?? 0) * 0.20);
+      if (_aLoss > 0) target._ammo = Math.max(0, (target._ammo ?? 0) - _aLoss);
+      const _fdest = damageUnit(target, 1);
+      unitLog(pilot, `FPV ENGINE FIRE — ${target._role.toUpperCase()} fuel/hydraulics hit, ammo −${_aLoss}${_fdest ? ' · DESTROYED' : ''}`);
+      if (!_fdest) unitLog(target, `ENGINE FIRE — fuel/hydraulic hit, crew evacuating`);
+      showToast('ENGINE FIRE — vehicle burning!', '#ef5350');
+    } else {
+      // Catastrophic penetration
+      const _killed = Math.ceil(target._count * (0.5 + Math.random() * 0.5));
+      const _destroyed = damageUnit(target, _killed);
+      unitLog(pilot, `FPV CATASTROPHIC HIT — ${target._role.toUpperCase()} ${_destroyed ? 'DESTROYED' : 'crew casualties ×' + _killed}`);
+      if (_destroyed) showToast(`${ROLES[target._role]?.label ?? 'Vehicle'} DESTROYED!`, '#ef5350');
+    }
     if (allMarkers.includes(pilot)) renderPanel();
     return;
   }
@@ -5013,6 +5054,10 @@ function assignRoute(marker, route) {
     if (_oc !== null) { const _om = obstacleSpeedMult(_oc, marker._role);
       if (_om === 0) { showToast(_fortBlockMsg(_oc, marker._role), '#ef5350'); cancelDraw(); return; }
       showToast(_fortWarnMsg(_oc, marker._role), '#ffa726'); } }
+  if (marker._immobilized && VEHICLE_ARMOR[marker._role]) {
+    showToast('Vehicle immobilized — cannot move!', '#ef5350');
+    cancelDraw(); pendingSplitCount = null; return;
+  }
   const count = pendingSplitCount ?? marker._count;
   let movingMarker = marker;
   if (count < marker._count) {
@@ -5253,6 +5298,16 @@ document.addEventListener('keydown', (e) => {
       clearTimeout(clickTimer); clickTimer = null;
       assignRoute(activeMarker, [...drawPoints]); saveState();
       cancelDraw(); closePanel();
+    }
+  }
+  if ((e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const _fe = document.activeElement;
+    if (_fe && (_fe.tagName === 'INPUT' || _fe.tagName === 'TEXTAREA')) return;
+    if (activePanel && activePanel._count >= 2) {
+      pendingSplitCount = Math.ceil(activePanel._count / 2);
+      renderPanel();
+      showToast(`Half-split: ${pendingSplitCount}/${activePanel._count} — draw route to deploy`, '#ffd54f');
+      e.preventDefault();
     }
   }
 });
@@ -5782,18 +5837,18 @@ function createMarker(pt, side, count, role = '') {
   }
   else if (role === 'artillery') { m._maxAmmo = 5; m._ammo = 3 + Math.floor(Math.random() * 3); }
   else if (role === 'tank') {
-    m._count = 3; m._maxAmmo = 30; m._ammo = 20 + Math.floor(Math.random() * 10);
-    m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+    m._count = (count > 0) ? count : 3; m._maxAmmo = 30; m._ammo = 20 + Math.floor(Math.random() * 10);
+    m._soldiers = Array.from({length: Math.min(m._count, 3)}, (_, i) => mkSoldier('rifleman', i));
     m._passengers = []; m._dismountingAt = 0;
   }
   else if (role === 'ifv') {
-    m._count = 3; m._maxAmmo = 500; m._ammo = 350 + Math.floor(Math.random() * 150);
-    m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+    m._count = (count > 0) ? count : 3; m._maxAmmo = 500; m._ammo = 350 + Math.floor(Math.random() * 150);
+    m._soldiers = Array.from({length: Math.min(m._count, 3)}, (_, i) => mkSoldier('rifleman', i));
     m._passengers = []; m._dismountingAt = 0;
   }
   else if (role === 'apc') {
-    m._count = 3; m._maxAmmo = 400; m._ammo = 300 + Math.floor(Math.random() * 100);
-    m._soldiers = [mkSoldier('rifleman',0), mkSoldier('rifleman',1), mkSoldier('rifleman',2)];
+    m._count = (count > 0) ? count : 3; m._maxAmmo = 400; m._ammo = 300 + Math.floor(Math.random() * 100);
+    m._soldiers = Array.from({length: Math.min(m._count, 3)}, (_, i) => mkSoldier('rifleman', i));
     m._passengers = []; m._dismountingAt = 0;
   }
   allMarkers.push(m);
@@ -6316,7 +6371,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-06-CDW';
+const VERSION = '2026-09-14-CDX';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
