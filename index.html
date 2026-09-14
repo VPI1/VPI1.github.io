@@ -2367,9 +2367,11 @@ function exitCombatMode() {
 let panelRangeCircle = null;
 let panelRangeCircleMax = null;  // outer max-range ring
 let panelHorizonCircle = null;   // radio horizon for FPV/mavic
+let panelVehicleCone = null;     // vehicle forward spotting cone
 let panelAntennaCircles = [];     // relay antenna coverage rings
 
 function clearPanelRange() {
+  if (panelVehicleCone)    { map.removeLayer(panelVehicleCone);    panelVehicleCone = null; }
   if (panelRangeCircle)    { map.removeLayer(panelRangeCircle);    panelRangeCircle = null; }
   if (panelRangeCircleMax) { map.removeLayer(panelRangeCircleMax); panelRangeCircleMax = null; }
   if (panelHorizonCircle)  { map.removeLayer(panelHorizonCircle);  panelHorizonCircle = null; }
@@ -2433,7 +2435,7 @@ function showPanelRange(m) {
       const _dlng = (_coneRng / 111320) * Math.sin(_rad) / Math.cos(_ll.lat * Math.PI / 180);
       _pts.push([_ll.lat + _dlat, _ll.lng + _dlng]);
     }
-    panelHorizonCircle = L.polygon(_pts, {
+    panelVehicleCone = L.polygon(_pts, {
       color, fill: true, fillColor: color, fillOpacity: 0.07, weight: 1.5, opacity: 0.55, dashArray: '4 6'
     }).addTo(map);
   }
@@ -6642,7 +6644,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CEC';
+const VERSION = '2026-09-14-CEC-1';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
