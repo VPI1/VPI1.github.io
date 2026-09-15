@@ -6470,9 +6470,12 @@ function initFirebase() {
           if (_clearingFb) return; // Firebase clear in progress — ignore stale snapshot
           if (!_fbInitSnapshotDone[side] && n > 0) {
             _fbInitSnapshotDone[side] = true;
-            var _fbUidSet = new Set(Object.keys(all));
-            for (var _om of [...allMarkers]) {
-              if (_om._side === side && _om._uid && !_fbUidSet.has(_om._uid)) removeUnit(_om);
+            var _hasCascade = Object.values(all).some(function(u) { return u && (u.count || 1) > 1; });
+            if (!_hasCascade) {
+              var _fbUidSet = new Set(Object.keys(all));
+              for (var _om of [...allMarkers]) {
+                if (_om._side === side && _om._uid && !_fbUidSet.has(_om._uid)) removeUnit(_om);
+              }
             }
           }
           fbApplySideSnapshot(side, all);
@@ -6872,7 +6875,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEM';
+const VERSION = '2026-09-15-CEO';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-15-v13'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
