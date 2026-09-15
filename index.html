@@ -6671,7 +6671,8 @@ function fbApplyUnit(d) {
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     if ((d.count ?? 1) <= 0) return; // never recreate a unit with count 0
     if (_killedUidCache.has(d.uid)) return; // already destroyed this session
-    var m2 = createMarker([d.lat, d.lng], d.side, Math.min(d.count || 1, groupSize(d.role)), d.role);
+    if ((d.count || 1) > 1) return; // stale cascade data (count is always 1 per unit)
+    var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
     m2._uid = d.uid;
     m2._clientId = d.clientId;
     if (d.fortLevel) { m2._fortLevel = d.fortLevel; setTimeout(function() { updateFortBadge(m2); }, 50); }
