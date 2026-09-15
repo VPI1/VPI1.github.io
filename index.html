@@ -6674,7 +6674,11 @@ function fbApplyUnit(d) {
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     if ((d.count ?? 1) <= 0) return; // never recreate a unit with count 0
     if (_killedUidCache.has(d.uid)) return; // already destroyed this session
-    if ((d.count || 1) > 1) return; // stale cascade data (count is always 1 per unit)
+    if ((d.count || 1) > 1) {
+      // stale cascade entry — delete it from Firebase permanently
+      if (_fbDb && d.uid && d.side) try { _fbDb.ref('units_' + d.side + '/' + d.uid).remove(); } catch(e) {}
+      return;
+    }
     var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
     m2._uid = d.uid;
     m2._clientId = d.clientId;
@@ -6875,7 +6879,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEP';
+const VERSION = '2026-09-15-CEQ';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-15-v14'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
