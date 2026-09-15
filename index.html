@@ -6296,7 +6296,7 @@ function createMarker(pt, side, count, role = '') {
   else if (role === 'fpv') {
     m._drones = 3 + Math.floor(Math.random() * 3); m._maxDrones = FPV_MAX_DRONES;
     m._soldiers = [mkSoldier('fpv_pilot',0), mkSoldier('fpv_spotter',1), mkSoldier('fpv_driver',2)];
-    m._count = 3;
+    m._count = (count > 0) ? count : 3;
     m._ammo    = m._soldiers.reduce((s, sol) => s + sol.ammo, 0);
     m._maxAmmo = m._soldiers.reduce((s, sol) => s + sol.ammo, 0);
   }
@@ -6879,9 +6879,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEQ';
+const VERSION = '2026-09-15-CER';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v14'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v15'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
