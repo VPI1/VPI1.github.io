@@ -6443,6 +6443,13 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
 
+      // Wipe stale Firebase units when a fresh spawn just happened
+      if (window._didFreshSpawn) {
+        window._didFreshSpawn = false;
+        _fbDb.ref('units_blue').remove().catch(function() {});
+        _fbDb.ref('units_red').remove().catch(function() {});
+      }
+
       // Show connection state
       _fbDb.ref('.info/connected').on('value', function(snap) {
         _syncLog(snap.val() ? 'connected ✓' : 'disconnected ✗');
@@ -6859,9 +6866,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEI';
+const VERSION = '2026-09-15-CEJ';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v9'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v10'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7837,6 +7844,7 @@ async function main() {
     }
 
     _spawnUidCounter = -1;
+    window._didFreshSpawn = true; // tell initFirebase to wipe stale Firebase units
     // Persist spawn for instant restore on next load
     try {
       localStorage.setItem(_SCKEY, JSON.stringify(
