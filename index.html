@@ -2728,6 +2728,12 @@ function _buildActTab(m, now, moving) {
           h += `<div class="pb-note" style="color:#ffa726">Dismounting… ${Math.ceil((m._dismountingAt-now)/1000)}s</div>`;
         } else {
           h += _pb('Dismount All', '⬙', 'tac', "_pa('veh-dismount')");
+          for (const _dpx of _pax) {
+            if ((_dpx.count ?? 0) > 0) {
+              const _dpl = ROLES[_dpx.role]?.label ?? _dpx.role ?? 'Troop';
+              h += _pb(`Dismount 1 ${_dpl}`, '⬙', 'tac', `"_pa('veh-dismount-one:${_dpx.role}')"`);
+            }
+          }
         }
       } else {
         h += `<div class="pb-note" style="color:#888">Empty · ${_cap} slots available</div>`;
@@ -3446,6 +3452,7 @@ window._pa = function(action) {
   else if (action === 'bda-abort')  { m._bdaAt = 0; m._bdaTerrain = null; unitLog(m, 'BDA aborted'); renderPanel(); }
   else if (action === 'mangal-install') { installMangal(m); }
   else if (action === 'veh-dismount')   { _vehDismount(m); }
+  else if (action.startsWith('veh-dismount-one:')) { _vehDismountOne(m, action.slice(16)); }
   else if (action.startsWith('embark:')) { const _ev = allMarkers.find(v => v._uid === action.slice(7)); if (_ev) doEmbark(m, _ev); }
   else if (action === 'mangal-cancel')  { cancelMangal(m); }
   else if (action === 'mangal-remove')  { removeMangal(m); }
@@ -4544,6 +4551,38 @@ function _vehDismount(m) {
     m._passengers = [];
     m._dismountingAt = 0;
     unitLog(m, 'Dismount complete');
+    spreadColocatedMarkers();
+    if (activePanel === m) renderPanel();
+  }, VEH_DISMOUNT_MS);
+}
+function _vehDismountOne(m, role) {
+  const _pax = m._passengers;
+  if (!_pax?.length) { showToast('No passengers aboard.', '#888'); return; }
+  if (m._dismountingAt && m._dismountingAt > Date.now()) { showToast('Already dismounting…', '#888'); return; }
+  const _pg = _pax.find(p => p.role === role && (p.count ?? 0) > 0);
+  if (!_pg) { showToast('No troops of that type aboard.', '#888'); return; }
+  m._dismountingAt = Date.now() + VEH_DISMOUNT_MS;
+  showToast(`Dismounting 1 ${ROLES[role]?.label ?? role} — ${Math.round(VEH_DISMOUNT_MS/1000)}s`, '#ffd54f');
+  unitLog(m, `Dismounting 1 ${ROLES[role]?.label ?? role}`);
+  renderPanel();
+  setTimeout(() => {
+    if (!allMarkers.includes(m)) return;
+    const _pg2 = (m._passengers ?? []).find(p => p.role === role && (p.count ?? 0) > 0);
+    if (!_pg2) return;
+    const pos = markerPos(m);
+    const _sol = _pg2.soldiers?.splice(0, 1)[0];
+    const nm = createMarker(pos, m._side, 1, role);
+    if (_sol) nm._soldiers = [_sol];
+    nm._uid = 'dis_' + Math.random().toString(36).slice(2);
+    nm._log = [];
+    unitLog(nm, `Dismounted from ${ROLES[m._role]?.label ?? 'vehicle'}`);
+    fbSyncUnit(nm);
+    _pg2.count -= 1;
+    if (_pg2.count <= 0) m._passengers = (m._passengers ?? []).filter(p => p !== _pg2);
+    m._dismountingAt = 0;
+    unitLog(m, 'Single dismount complete');
+    fbSyncUnit(m);
+    spreadColocatedMarkers();
     if (activePanel === m) renderPanel();
   }, VEH_DISMOUNT_MS);
 }
@@ -5563,9 +5602,21 @@ map.on('click', (e) => {
   if (combatMode === 'area-suppress') { executeAreaSuppress(combatActor, e.latlng); return; }
   if (combatMode === 'he-ground') { executeHEFire(combatActor, e.latlng); return; }
   if (!drawMode) {
-    // Guard: if click originated from a marker (within last 200ms), don't steal focus
     if (Date.now() - _markerClickAt < 200) return;
-    // If a unit is selected and user clicks the map, start drawing its route
+    // Multi-select: single map click moves all selected units to that point
+    if (selectedMarkers.size > 0) {
+      if (!pointInBoundary(e.latlng.lat, e.latlng.lng)) { showToast('Outside game boundary', '#ef5350'); return; }
+      const _dest = [e.latlng.lat, e.latlng.lng];
+      let _selOff = 0;
+      selectedMarkers.forEach(sm => {
+        assignRoute(sm, [markerPos(sm), [_dest[0] + _selOff * 0.00005, _dest[1] + _selOff * 0.00005]]);
+        _selOff++;
+      });
+      selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline'));
+      selectedMarkers.clear();
+      saveState();
+      return;
+    }
     if (activeMarker && activePanel) { beginDrawForSelected(e.latlng); return; }
     closePanel(); return;
   }
@@ -6808,9 +6859,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-14-CEF';
+const VERSION = '2026-09-15-CEG';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-08-22-v6'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v7'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7616,7 +7667,7 @@ async function main() {
     }
 
     // per-role minimum separation (degrees) to avoid clustering
-    const ROLE_SEP = { infantry: 0.006, mortar: 0.008, mavic: 0.014, fpv: 0.014, artillery: 0.018 };
+    const ROLE_SEP = { infantry: 0.006, mortar: 0.008, mavic: 0.014, fpv: 0.014, artillery: 0.018, tank: 0.010, ifv: 0.010, apc: 0.010 };
     const roleOccupied = {}; // "role+side" → [pts]
 
     function markOccupied(pt, role, northSide) {
@@ -7808,6 +7859,7 @@ async function main() {
       }
     }
     } // end spawn cache if/else
+    setTimeout(spreadColocatedMarkers, 400); // fan out stacked units after spawn
 
     // Pre-hide all enemy markers before the loading overlay drops
     for (const _m of allMarkers) {
