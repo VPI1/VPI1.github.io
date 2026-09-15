@@ -6879,9 +6879,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CES';
+const VERSION = '2026-09-15-CET';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v16'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v17'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7830,25 +7830,6 @@ async function main() {
       }
     }
 
-    // Guarantee each side has exactly 3 of each non-vehicle role
-    const _ENF_ROLES = ['infantry','mortar','mavic','fpv','artillery'];
-    for (const _er2 of _ENF_ROLES) {
-      for (const [_ens2, _ess2] of [[true,'blue'],[false,'red']]) {
-        let _enH = allMarkers.filter(m => m._side === _ess2 && m._role === _er2).length;
-        while (_enH < 3) {
-          let _enP = pickSpotSep(_ens2, _er2) || pickSpotForRole(_ens2, _er2);
-          if (!_enP) {
-            const _enA = allMarkers.find(m => m._side === _ess2);
-            if (!_enA) break;
-            const [_eaLat, _eaLng] = markerPos(_enA);
-            _enP = [_eaLat + (Math.random()-0.5)*0.014, _eaLng + (Math.random()-0.5)*0.014];
-          }
-          markOccupied(_enP, _er2, _ens2);
-          createMarker(_enP, _ess2, 1, _er2);
-          _enH++;
-        }
-      }
-    }
     Math.random = _origMathRand;
 
     // ── Armored vehicles — spawned with real random after seeded section ──
@@ -7904,6 +7885,24 @@ async function main() {
     loadAnnotations();
     fetchWeather();
     ensureVehicles();
+    // Top-up: place extra units near existing ones until each side has 3 per role
+    { const _TP = ['infantry','mortar','mavic','fpv','artillery'];
+      for (const _tr of _TP) {
+        for (const _ts of ['blue','red']) {
+          const _tArr = allMarkers.filter(m => m._side === _ts && m._role === _tr);
+          for (let _ti = _tArr.length; _ti < 3; _ti++) {
+            const _anch = _tArr[_ti-1] || allMarkers.find(m => m._side === _ts);
+            if (!_anch) break;
+            const [_aLat, _aLng] = markerPos(_anch);
+            const _ang = (_ti % 3) * 2.094;
+            const _nm = createMarker([_aLat + Math.cos(_ang)*0.003, _aLng + Math.sin(_ang)*0.003], _ts, 1, _tr);
+            _nm._uid = SPAWN_KEY + '_tp' + _tr.slice(0,3) + _ts[0] + _ti;
+            _tArr.push(_nm);
+          }
+        }
+      }
+      try { localStorage.setItem(_SCKEY, JSON.stringify(allMarkers.map(m => ({pos:markerPos(m),side:m._side,count:m._count,role:m._role,uid:m._uid})))); } catch {}
+    }
     initFirebase();
 
   } catch (err) {
