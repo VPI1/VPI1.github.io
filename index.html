@@ -6655,7 +6655,7 @@ function fbApplyUnit(d) {
       }
       existing.setLatLng([d.lat, d.lng]);
     }
-    if (d.count != null && d.count !== existing._count) {
+    if (d.count != null && d.count !== existing._count && d.count <= (existing._count || 1)) {
       existing._count = d.count;
       if (d.count === 0) { removeUnit(existing); return; }  // unit destroyed on other client
       existing.setIcon(soldierIcon(existing._side, d.count, existing._role, existing._mangalHp ?? null));
@@ -6671,7 +6671,7 @@ function fbApplyUnit(d) {
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     if ((d.count ?? 1) <= 0) return; // never recreate a unit with count 0
     if (_killedUidCache.has(d.uid)) return; // already destroyed this session
-    var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
+    var m2 = createMarker([d.lat, d.lng], d.side, Math.min(d.count || 1, groupSize(d.role)), d.role);
     m2._uid = d.uid;
     m2._clientId = d.clientId;
     if (d.fortLevel) { m2._fortLevel = d.fortLevel; setTimeout(function() { updateFortBadge(m2); }, 50); }
@@ -6871,9 +6871,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEL';
+const VERSION = '2026-09-15-CEM';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v12'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v13'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
