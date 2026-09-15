@@ -4641,6 +4641,29 @@ function doEmbark(infantry, vehicle) {
 
 // Fan out units that share the same ~20m grid cell so they're individually selectable
 let _spreadPending = false;
+function splitAllToIndividuals() {
+  // Convert any count>1 non-vehicle marker into N individual count=1 markers
+  const _toSplit = allMarkers.filter(m => m._count > 1 && !VEHICLE_ARMOR[m._role]);
+  if (!_toSplit.length) return;
+  for (const m of _toSplit) {
+    if (!allMarkers.includes(m)) continue;
+    const n = m._count;
+    const pos = markerPos(m);
+    const R = 0.00020; // ~22m radius
+    const cosLat = Math.cos(pos[0] * Math.PI / 180);
+    for (let i = 1; i < n; i++) {
+      const angle = 2 * Math.PI * i / n;
+      const nPt = [pos[0] + R * Math.cos(angle), pos[1] + (R / cosLat) * Math.sin(angle)];
+      const nm = createMarker(nPt, m._side, 1, m._role);
+      nm._log = [];
+      if (m._side === userSide && nm._uid) fbSyncUnit(nm);
+    }
+    m._count = 1;
+    m.setIcon(soldierIcon(m._side, 1, m._role, m._mangalHp ?? null));
+    if (m._side === userSide && m._uid) fbSyncUnit(m);
+  }
+  spreadColocatedMarkers();
+}
 function spreadColocatedMarkers() {
   if (_spreadPending) return;
   _spreadPending = true;
@@ -6613,6 +6636,7 @@ function fbApplySideSnapshot(side, all) {
     fbApplyUnit(d);
   }
   spreadColocatedMarkers(); // fan out any stacked units after state loads
+  splitAllToIndividuals(); // split any count>1 units into individuals
 }
 
 function fbApplyUnit(d) {
@@ -6859,9 +6883,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEG';
-  const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v7'; // change to force a new unit layout
+const VERSION = '2026-09-15-CEH';
+  const GLOBAL_RESET_TS = 1789430400000; // force all sessions to reset on this push
+  const SPAWN_KEY = '2026-09-15-v8'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7660,10 +7684,7 @@ async function main() {
     }
 
     function groupSize(role) {
-      if (['fpv','mavic'].includes(role)) return 3 + Math.floor(Math.random() * 2); // 3-4
-      if (role === 'artillery') return 3 + Math.floor(Math.random() * 3);           // 3-5
-      if (role === 'mortar')    return 2 + Math.floor(Math.random() * 2);           // 2-3
-      return 1; // each infantry spawns as individual soldier
+      return 1; // all units spawn as individuals (count=1 per marker)
     }
 
     // per-role minimum separation (degrees) to avoid clustering
@@ -7859,7 +7880,7 @@ async function main() {
       }
     }
     } // end spawn cache if/else
-    setTimeout(spreadColocatedMarkers, 400); // fan out stacked units after spawn
+    setTimeout(splitAllToIndividuals, 400); // split groups and fan out after spawn
 
     // Pre-hide all enemy markers before the loading overlay drops
     for (const _m of allMarkers) {
