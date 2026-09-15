@@ -6444,10 +6444,14 @@ function initFirebase() {
       _fbDb = firebase.database();
 
       // Wipe stale Firebase units when a fresh spawn just happened
+      var _clearingFb = false;
       if (window._didFreshSpawn) {
         window._didFreshSpawn = false;
-        _fbDb.ref('units_blue').remove().catch(function() {});
-        _fbDb.ref('units_red').remove().catch(function() {});
+        _clearingFb = true;
+        Promise.all([
+          _fbDb.ref('units_blue').remove().catch(function() {}),
+          _fbDb.ref('units_red').remove().catch(function() {})
+        ]).then(function() { _clearingFb = false; });
       }
 
       // Show connection state
@@ -6463,6 +6467,7 @@ function initFirebase() {
           var n = Object.keys(all).length;
           var remote = Object.values(all).filter(function(d) { return d && d.clientId !== _fbClientId; }).length;
           _syncLog('rcv ' + side + ': ' + n + ' total, ' + remote + ' remote');
+          if (_clearingFb) return; // Firebase clear in progress — ignore stale snapshot
           if (!_fbInitSnapshotDone[side] && n > 0) {
             _fbInitSnapshotDone[side] = true;
             var _fbUidSet = new Set(Object.keys(all));
@@ -6866,9 +6871,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEK';
+const VERSION = '2026-09-15-CEL';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v11'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v12'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
