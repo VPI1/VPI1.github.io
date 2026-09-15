@@ -4641,29 +4641,6 @@ function doEmbark(infantry, vehicle) {
 
 // Fan out units that share the same ~20m grid cell so they're individually selectable
 let _spreadPending = false;
-function splitAllToIndividuals() {
-  // Convert any count>1 non-vehicle marker into N individual count=1 markers
-  const _toSplit = allMarkers.filter(m => m._count > 1 && !VEHICLE_ARMOR[m._role]);
-  if (!_toSplit.length) return;
-  for (const m of _toSplit) {
-    if (!allMarkers.includes(m)) continue;
-    const n = m._count;
-    const pos = markerPos(m);
-    const R = 0.00020; // ~22m radius
-    const cosLat = Math.cos(pos[0] * Math.PI / 180);
-    for (let i = 1; i < n; i++) {
-      const angle = 2 * Math.PI * i / n;
-      const nPt = [pos[0] + R * Math.cos(angle), pos[1] + (R / cosLat) * Math.sin(angle)];
-      const nm = createMarker(nPt, m._side, 1, m._role);
-      nm._log = [];
-      if (m._side === userSide && nm._uid) fbSyncUnit(nm);
-    }
-    m._count = 1;
-    m.setIcon(soldierIcon(m._side, 1, m._role, m._mangalHp ?? null));
-    if (m._side === userSide && m._uid) fbSyncUnit(m);
-  }
-  spreadColocatedMarkers();
-}
 function spreadColocatedMarkers() {
   if (_spreadPending) return;
   _spreadPending = true;
@@ -6636,7 +6613,6 @@ function fbApplySideSnapshot(side, all) {
     fbApplyUnit(d);
   }
   spreadColocatedMarkers(); // fan out any stacked units after state loads
-  splitAllToIndividuals(); // split any count>1 units into individuals
 }
 
 function fbApplyUnit(d) {
@@ -6883,9 +6859,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEH';
-  const GLOBAL_RESET_TS = 1789430400000; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v8'; // change to force a new unit layout
+const VERSION = '2026-09-15-CEI';
+  const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
+  const SPAWN_KEY = '2026-09-15-v9'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7753,8 +7729,8 @@ async function main() {
 
     _ltxt('Placing units… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
-    // Guarantee at least 2 artillery per side before random pool
-    for (let i = 0; i < 2; i++) {
+    // 1 artillery per side
+    for (let i = 0; i < 1; i++) {
       for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
         const pt = pickSpotSep(northSide, 'artillery');
         if (pt) { markOccupied(pt, 'artillery', northSide); createMarker(pt, side, groupSize('artillery'), 'artillery'); }
@@ -7764,7 +7740,7 @@ async function main() {
     _ltxt('Blue forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Blue infantry core (10-13 units) ──
-    const numBlueInf = 10 + Math.floor(Math.random() * 4);
+    const numBlueInf = 5;
     for (let i = 0; i < numBlueInf; i++) {
       const pt = pickSpotSep(true, 'infantry');
       if (!pt) continue;
@@ -7772,7 +7748,7 @@ async function main() {
       createMarker(pt, 'blue', groupSize('infantry'), 'infantry');
     }
     // ── Blue mortars (3-4 units) ──
-    const numBlueMortar = 3 + Math.floor(Math.random() * 2);
+    const numBlueMortar = 1;
     for (let i = 0; i < numBlueMortar; i++) {
       const pt = pickSpotSep(true, 'mortar');
       if (!pt) continue;
@@ -7780,7 +7756,7 @@ async function main() {
       createMarker(pt, 'blue', groupSize('mortar'), 'mortar');
     }
     // ── Blue mavics (~1 per horizontal km ≈ 22-26 units) ──
-    const numBlueMavic = 22 + Math.floor(Math.random() * 5);
+    const numBlueMavic = 1;
     for (let i = 0; i < numBlueMavic; i++) {
       const pt = pickSpotSep(true, 'mavic');
       if (!pt) continue;
@@ -7791,7 +7767,7 @@ async function main() {
     _ltxt('Red forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Red infantry core (14-18 units) ──
-    const numRedInf = 14 + Math.floor(Math.random() * 5);
+    const numRedInf = 5;
     for (let i = 0; i < numRedInf; i++) {
       const pt = pickSpotSep(false, 'infantry');
       if (!pt) continue;
@@ -7799,7 +7775,7 @@ async function main() {
       createMarker(pt, 'red', groupSize('infantry'), 'infantry');
     }
     // ── Red mortars (4-5 units) ──
-    const numRedMortar = 4 + Math.floor(Math.random() * 2);
+    const numRedMortar = 1;
     for (let i = 0; i < numRedMortar; i++) {
       const pt = pickSpotSep(false, 'mortar');
       if (!pt) continue;
@@ -7807,7 +7783,7 @@ async function main() {
       createMarker(pt, 'red', groupSize('mortar'), 'mortar');
     }
     // ── Red mavics (reduced) ──
-    const numRedMavic = 8 + Math.floor(Math.random() * 5);
+    const numRedMavic = 1;
     for (let i = 0; i < numRedMavic; i++) {
       const pt = pickSpotSep(false, 'mavic');
       if (!pt) continue;
@@ -7816,7 +7792,7 @@ async function main() {
     }
 
     // ── Extra infantry close to line (1-2.5 km band), 6 per side ──
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 1; i++) {
       const bPt = pickBand(true,  1.0, 2.5);
       if (bPt) { markOccupied(bPt, 'infantry', true);  createMarker(bPt, 'blue', groupSize('infantry'), 'infantry'); }
       const rPt = pickBand(false, 1.0, 2.5);
@@ -7830,7 +7806,7 @@ async function main() {
       const side = northSide ? 'blue' : 'red';
       const infCount = allMarkers.filter(m => m._side === side && m._role === 'infantry').length;
       const fpvCount = allMarkers.filter(m => m._side === side && m._role === 'fpv').length;
-      const needed   = Math.floor(infCount / 3) - fpvCount;
+      const needed   = 1 - fpvCount; // exactly 1 FPV crew per side
       for (let i = 0; i < needed; i++) {
         const pt = pickSpotSep(northSide, 'fpv');
         if (!pt) continue;
@@ -7880,7 +7856,7 @@ async function main() {
       }
     }
     } // end spawn cache if/else
-    setTimeout(splitAllToIndividuals, 400); // split groups and fan out after spawn
+    setTimeout(spreadColocatedMarkers, 400); // fan out stacked units after spawn
 
     // Pre-hide all enemy markers before the loading overlay drops
     for (const _m of allMarkers) {
