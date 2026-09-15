@@ -6875,9 +6875,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEO';
+const VERSION = '2026-09-15-CEP';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v13'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v14'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7852,7 +7852,7 @@ async function main() {
     // Persist spawn for instant restore on next load
     try {
       localStorage.setItem(_SCKEY, JSON.stringify(
-        allMarkers.map(m => ({ pos: markerPos(m), side: m._side, count: m._count, role: m._role }))
+        allMarkers.map(m => ({ pos: markerPos(m), side: m._side, count: m._count, role: m._role, uid: m._uid }))
       ));
     } catch {}
     } else {
@@ -7860,7 +7860,8 @@ async function main() {
     _ltxt('Restoring units… +' + _ts());
     for (let _ci = 0; _ci < _scData.length; _ci++) {
       const _cu = _scData[_ci];
-      createMarker(_cu.pos, _cu.side, _cu.count, _cu.role);
+      const _crm = createMarker(_cu.pos, _cu.side, _cu.count, _cu.role);
+      if (_cu.uid) _crm._uid = _cu.uid;
       if (_ci % 10 === 9) {
         document.getElementById('loading-text').textContent =
           'Restoring units… (' + (_ci + 1) + '/' + _scData.length + ')';
