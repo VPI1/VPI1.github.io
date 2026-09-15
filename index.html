@@ -6879,9 +6879,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEU';
+const VERSION = '2026-09-15-CEV';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v18'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v19'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7830,17 +7830,24 @@ async function main() {
       }
     }
 
-    // Guarantee exactly 3 of each non-vehicle role per side (inside seeded section, before cache save)
+    // Guarantee exactly 3 of each non-vehicle role per side
+    // Runs inside the seeded-RNG block so UIDs are deterministic, and BEFORE
+    // the cache save so all 3 are stored and survive cache-restore + Firebase cleanup.
     { const _G3 = ['infantry','mortar','mavic','fpv','artillery'];
       for (const [_gNs, _gSide] of [[true,'blue'],[false,'red']]) {
+        // Fallback center if no anchor unit exists for this side yet
+        const _gFallback = [CENTER[0] + (_gNs ? 0.04 : -0.04), CENTER[1]];
         for (const _gRole of _G3) {
           const _gArr = allMarkers.filter(m => m._side === _gSide && m._role === _gRole);
           while (_gArr.length < 3) {
-            const _gA = _gArr[_gArr.length-1] || allMarkers.find(m => m._side === _gSide);
-            if (!_gA) break;
-            const [_gLat, _gLng] = markerPos(_gA);
+            const _gAnch = (_gArr.length > 0 ? _gArr[_gArr.length - 1] : null)
+                        || allMarkers.find(m => m._side === _gSide);
+            const [_gLat, _gLng] = _gAnch ? markerPos(_gAnch) : _gFallback;
             const _gAng = (_gArr.length % 3) * 2.094;
-            const _gNm = createMarker([_gLat+Math.cos(_gAng)*0.003, _gLng+Math.sin(_gAng)*0.003], _gSide, 1, _gRole);
+            const _gNm = createMarker(
+              [_gLat + Math.cos(_gAng) * 0.003, _gLng + Math.sin(_gAng) * 0.003],
+              _gSide, 1, _gRole
+            );
             _gArr.push(_gNm);
           }
         }
