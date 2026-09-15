@@ -6866,9 +6866,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEJ';
+const VERSION = '2026-09-15-CEK';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-15-v10'; // change to force a new unit layout
+  const SPAWN_KEY = '2026-09-15-v11'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7736,8 +7736,8 @@ async function main() {
 
     _ltxt('Placing units… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
-    // 1 artillery per side
-    for (let i = 0; i < 1; i++) {
+    // 3 artillery per side
+    for (let i = 0; i < 3; i++) {
       for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
         const pt = pickSpotSep(northSide, 'artillery');
         if (pt) { markOccupied(pt, 'artillery', northSide); createMarker(pt, side, groupSize('artillery'), 'artillery'); }
@@ -7747,7 +7747,7 @@ async function main() {
     _ltxt('Blue forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Blue infantry core (10-13 units) ──
-    const numBlueInf = 5;
+    const numBlueInf = 3;
     for (let i = 0; i < numBlueInf; i++) {
       const pt = pickSpotSep(true, 'infantry');
       if (!pt) continue;
@@ -7755,7 +7755,7 @@ async function main() {
       createMarker(pt, 'blue', groupSize('infantry'), 'infantry');
     }
     // ── Blue mortars (3-4 units) ──
-    const numBlueMortar = 1;
+    const numBlueMortar = 3;
     for (let i = 0; i < numBlueMortar; i++) {
       const pt = pickSpotSep(true, 'mortar');
       if (!pt) continue;
@@ -7763,7 +7763,7 @@ async function main() {
       createMarker(pt, 'blue', groupSize('mortar'), 'mortar');
     }
     // ── Blue mavics (~1 per horizontal km ≈ 22-26 units) ──
-    const numBlueMavic = 1;
+    const numBlueMavic = 3;
     for (let i = 0; i < numBlueMavic; i++) {
       const pt = pickSpotSep(true, 'mavic');
       if (!pt) continue;
@@ -7774,7 +7774,7 @@ async function main() {
     _ltxt('Red forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Red infantry core (14-18 units) ──
-    const numRedInf = 5;
+    const numRedInf = 3;
     for (let i = 0; i < numRedInf; i++) {
       const pt = pickSpotSep(false, 'infantry');
       if (!pt) continue;
@@ -7782,7 +7782,7 @@ async function main() {
       createMarker(pt, 'red', groupSize('infantry'), 'infantry');
     }
     // ── Red mortars (4-5 units) ──
-    const numRedMortar = 1;
+    const numRedMortar = 3;
     for (let i = 0; i < numRedMortar; i++) {
       const pt = pickSpotSep(false, 'mortar');
       if (!pt) continue;
@@ -7790,7 +7790,7 @@ async function main() {
       createMarker(pt, 'red', groupSize('mortar'), 'mortar');
     }
     // ── Red mavics (reduced) ──
-    const numRedMavic = 1;
+    const numRedMavic = 3;
     for (let i = 0; i < numRedMavic; i++) {
       const pt = pickSpotSep(false, 'mavic');
       if (!pt) continue;
@@ -7799,12 +7799,7 @@ async function main() {
     }
 
     // ── Extra infantry close to line (1-2.5 km band), 6 per side ──
-    for (let i = 0; i < 1; i++) {
-      const bPt = pickBand(true,  1.0, 2.5);
-      if (bPt) { markOccupied(bPt, 'infantry', true);  createMarker(bPt, 'blue', groupSize('infantry'), 'infantry'); }
-      const rPt = pickBand(false, 1.0, 2.5);
-      if (rPt) { markOccupied(rPt, 'infantry', false); createMarker(rPt, 'red',  groupSize('infantry'), 'infantry'); }
-    }
+    // close-line infantry disabled (all infantry already spawned above)
 
     _ltxt('FPV crews… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
@@ -7813,7 +7808,7 @@ async function main() {
       const side = northSide ? 'blue' : 'red';
       const infCount = allMarkers.filter(m => m._side === side && m._role === 'infantry').length;
       const fpvCount = allMarkers.filter(m => m._side === side && m._role === 'fpv').length;
-      const needed   = 1 - fpvCount; // exactly 1 FPV crew per side
+      const needed   = 3 - fpvCount; // exactly 3 FPV crews per side
       for (let i = 0; i < needed; i++) {
         const pt = pickSpotSep(northSide, 'fpv');
         if (!pt) continue;
