@@ -6263,6 +6263,41 @@ async function getElevationModifier(atkPos, tgtPos) {
 
 // ── 3D map toggle ─────────────────────────────────────────────
 
+// ── DIAGNOSTIC INFRASTRUCTURE (remove after debugging) ──────────────────────
+window._gd = {
+  events: [],
+  log: function(msg) { this.events.push('[' + new Date().toISOString().slice(11,23) + '] ' + msg); console.log('[DIAG] ' + msg); },
+  markersTable: function() {
+    var r = {}; (window.allMarkers||[]).forEach(function(m){var k=m._side+'/'+m._role;r[k]=(r[k]||0)+1;});return r;
+  },
+  cacheTable: function() {
+    var keys = []; for(var k in localStorage) if(k.startsWith('spawn_v2_')) keys.push(k);
+    var r = {}; keys.forEach(function(k){
+      try { var d=JSON.parse(localStorage.getItem(k)); if(Array.isArray(d)) d.forEach(function(u){var kk=u.side+'/'+u.role;r[kk]=(r[kk]||0)+1;}); r['__key__']=k; } catch(e) {}
+    }); return r;
+  },
+  show: function() {
+    var existing = document.getElementById('_gdOverlay');
+    if (existing) { existing.remove(); return; }
+    var el = document.createElement('div');
+    el.id = '_gdOverlay';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);color:#0f0;font:12px monospace;overflow:auto;padding:16px;white-space:pre;';
+    var lines = ['=== SPAWN DIAGNOSTIC (Shift+D to close) ===', ''];
+    lines.push('allMarkers breakdown:');
+    var am = this.markersTable(); Object.keys(am).sort().forEach(function(k){lines.push('  '+k+': '+am[k]);});
+    lines.push('');
+    lines.push('localStorage spawn cache:');
+    var cm = this.cacheTable(); Object.keys(cm).sort().forEach(function(k){lines.push('  '+k+': '+cm[k]);});
+    lines.push('');
+    lines.push('Spawn events ('+this.events.length+'):');
+    this.events.forEach(function(e){lines.push('  '+e);});
+    el.textContent = lines.join('\n');
+    document.body.appendChild(el);
+  }
+};
+document.addEventListener('keydown', function(e) { if (e.shiftKey && e.key==='D') window._gd.show(); });
+// ── END DIAGNOSTIC INFRASTRUCTURE ────────────────────────────────────────────
+
 function createMarker(pt, side, count, role = '') {
   const m = L.marker(pt, { icon: soldierIcon(side, count, role), draggable: false });
   m._side = side; m._count = count; m._role = role;
@@ -6473,8 +6508,13 @@ function initFirebase() {
             var _hasCascade = Object.values(all).some(function(u) { return u && (u.count || 1) > 1; });
             if (!_hasCascade) {
               var _fbUidSet = new Set(Object.keys(all));
+              var _fbLocalUids = allMarkers.filter(function(m){return m._side===side&&m._uid;}).map(function(m){return m._uid;});
+              window._gd.log('FB CLEANUP ' + side + ': Firebase has ' + n + ' UIDs, local has ' + _fbLocalUids.length + ' UIDs');
               for (var _om of [...allMarkers]) {
-                if (_om._side === side && _om._uid && !_fbUidSet.has(_om._uid)) removeUnit(_om);
+                if (_om._side === side && _om._uid && !_fbUidSet.has(_om._uid)) {
+                  window._gd.log('FB CLEANUP removing ' + side + '/' + _om._role + ' uid=' + _om._uid);
+                  removeUnit(_om);
+                }
               }
             }
           }
@@ -6879,7 +6919,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEV';
+const VERSION = '2026-09-15-CEDIAG';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-15-v19'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7641,6 +7681,7 @@ async function main() {
     try { const _sr = localStorage.getItem(_SCKEY); if (_sr) _scData = JSON.parse(_sr); } catch {}
     const _useSpawnCache = Array.isArray(_scData) && _scData.length > 20;
     if (!_useSpawnCache) {
+    window._gd.log('FRESH SPAWN — SPAWN_KEY=' + SPAWN_KEY + ', counter starting at 0');
     // Seed Math.random for deterministic spawn — all sessions get identical units
     const _origMathRand = Math.random;
     Math.random = seededRand(SPAWN_KEY);
@@ -7831,13 +7872,11 @@ async function main() {
     }
 
     // Guarantee exactly 3 of each non-vehicle role per side
-    // Runs inside the seeded-RNG block so UIDs are deterministic, and BEFORE
-    // the cache save so all 3 are stored and survive cache-restore + Firebase cleanup.
     { const _G3 = ['infantry','mortar','mavic','fpv','artillery'];
       for (const [_gNs, _gSide] of [[true,'blue'],[false,'red']]) {
-        // Fallback center if no anchor unit exists for this side yet
         const _gFallback = [CENTER[0] + (_gNs ? 0.04 : -0.04), CENTER[1]];
         for (const _gRole of _G3) {
+          const _gBefore = allMarkers.filter(m => m._side === _gSide && m._role === _gRole).length;
           const _gArr = allMarkers.filter(m => m._side === _gSide && m._role === _gRole);
           while (_gArr.length < 3) {
             const _gAnch = (_gArr.length > 0 ? _gArr[_gArr.length - 1] : null)
@@ -7850,6 +7889,7 @@ async function main() {
             );
             _gArr.push(_gNm);
           }
+          window._gd.log('GUARANTEE ' + _gSide + '/' + _gRole + ': ' + _gBefore + ' → ' + _gArr.length + ' (uid last=' + (_gArr[_gArr.length-1]&&_gArr[_gArr.length-1]._uid) + ')');
         }
       }
     }
@@ -7878,11 +7918,13 @@ async function main() {
     window._didFreshSpawn = true; // tell initFirebase to wipe stale Firebase units
     // Persist spawn for instant restore on next load
     try {
-      localStorage.setItem(_SCKEY, JSON.stringify(
-        allMarkers.map(m => ({ pos: markerPos(m), side: m._side, count: m._count, role: m._role, uid: m._uid }))
-      ));
-    } catch {}
+      var _savedData = allMarkers.map(m => ({ pos: markerPos(m), side: m._side, count: m._count, role: m._role, uid: m._uid }));
+      localStorage.setItem(_SCKEY, JSON.stringify(_savedData));
+      var _sc2 = {}; _savedData.forEach(function(u){var k=u.side+'/'+u.role;_sc2[k]=(_sc2[k]||0)+1;});
+      window._gd.log('CACHE SAVED: ' + _savedData.length + ' total — ' + JSON.stringify(_sc2));
+    } catch (e) { window._gd.log('CACHE SAVE FAILED: ' + e); }
     } else {
+    window._gd.log('CACHE RESTORE — key=' + _SCKEY + ', entries=' + (_scData ? _scData.length : 0));
     // Fast cache path — create markers in batches of 10 so browser stays responsive
     _ltxt('Restoring units… +' + _ts());
     for (let _ci = 0; _ci < _scData.length; _ci++) {
