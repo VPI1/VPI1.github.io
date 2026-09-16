@@ -2304,7 +2304,6 @@ function unitLog(m, text) {
 
 // ── unit removal / damage ─────────────────────────────────────
 function removeUnit(marker) {
-  if (window._gd) window._gd.log("removeUnit: " + (marker&&marker._side) + "/" + (marker&&marker._role) + " uid=" + (marker&&marker._uid));
   if (marker._artPending) { map.removeLayer(marker._artPending.aimCircle); marker._artPending = null; }
   if (marker._supply?.convoyMarker) { map.removeLayer(marker._supply.convoyMarker); marker._supply = null; }
   marker._fpvReadyAt = 0;
