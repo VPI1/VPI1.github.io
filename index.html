@@ -1556,8 +1556,6 @@ let _markerClickAt = 0; // timestamp of last marker click, to block map-click fr
 const movingMarkers = new Map();
 let clickTimer = null;
 let pendingSplitCount = null;
-let selectedMarkers = new Set();
-let _selBoxStart = null, _selBox = null, _selBoxMoved = false;
 let activePanel = null;
 const allMarkers = [];
 
@@ -2713,27 +2711,11 @@ function _buildActTab(m, now, moving) {
           const _prl = ROLES[p.role]?.label ?? p.role ?? 'Infantry';
           const _pCol = (p.count ?? 0) < 2 ? '#ef9a9a' : (p.count ?? 0) < 4 ? '#ffa726' : '#81c784';
           h += `<div class="pb-note" style="color:${_pCol}">${_prl} · ${p.count} troops</div>`;
-          if (p.soldiers?.length) {
-            for (const _s of p.soldiers) {
-              const _sAlive = _s.alive !== false;
-              const _sWounded = _sAlive && _s.hp != null && _s.hp < 50;
-              const _sIcon = !_sAlive ? '☠' : _sWounded ? '⚠' : '✓';
-              const _sCol2 = !_sAlive ? '#ef5350' : _sWounded ? '#ffa726' : '#81c784';
-              const _sStat = !_sAlive ? 'KIA' : _sWounded ? 'WIA' : 'OK';
-              h += `<div class="pb-note" style="color:${_sCol2};margin-left:10px;font-size:0.82em">${_sIcon} Soldier ${(_s.id ?? 0) + 1} — ${_sStat}</div>`;
-            }
-          }
         }
         if (m._dismountingAt > now) {
           h += `<div class="pb-note" style="color:#ffa726">Dismounting… ${Math.ceil((m._dismountingAt-now)/1000)}s</div>`;
         } else {
           h += _pb('Dismount All', '⬙', 'tac', "_pa('veh-dismount')");
-          for (const _dpx of _pax) {
-            if ((_dpx.count ?? 0) > 0) {
-              const _dpl = ROLES[_dpx.role]?.label ?? _dpx.role ?? 'Troop';
-              h += _pb(`Dismount 1 ${_dpl}`, '⬙', 'tac', `"_pa('veh-dismount-one:${_dpx.role}')"`);
-            }
-          }
         }
       } else {
         h += `<div class="pb-note" style="color:#888">Empty · ${_cap} slots available</div>`;
@@ -3452,7 +3434,6 @@ window._pa = function(action) {
   else if (action === 'bda-abort')  { m._bdaAt = 0; m._bdaTerrain = null; unitLog(m, 'BDA aborted'); renderPanel(); }
   else if (action === 'mangal-install') { installMangal(m); }
   else if (action === 'veh-dismount')   { _vehDismount(m); }
-  else if (action.startsWith('veh-dismount-one:')) { _vehDismountOne(m, action.slice(16)); }
   else if (action.startsWith('embark:')) { const _ev = allMarkers.find(v => v._uid === action.slice(7)); if (_ev) doEmbark(m, _ev); }
   else if (action === 'mangal-cancel')  { cancelMangal(m); }
   else if (action === 'mangal-remove')  { removeMangal(m); }
@@ -3540,7 +3521,7 @@ function applySupply(unit) {
     const dp = nearestDepPoint(unit._side, role, markerPos(unit));
     if (dp) {
       const spawnPos = dp.marker.getLatLng();
-      const spawnCount = 1;
+      const spawnCount = (role === 'infantry') ? 4 : 1;
       const newUnit = createMarker([spawnPos.lat, spawnPos.lng], unit._side, spawnCount, role);
       const roleLabel = ROLES[role]?.label ?? role;
       unitLog(newUnit, `${roleLabel} unit spawned at ${dp.role === 'all' ? 'general' : dp.role} deployment point`);
@@ -4551,38 +4532,6 @@ function _vehDismount(m) {
     m._passengers = [];
     m._dismountingAt = 0;
     unitLog(m, 'Dismount complete');
-    spreadColocatedMarkers();
-    if (activePanel === m) renderPanel();
-  }, VEH_DISMOUNT_MS);
-}
-function _vehDismountOne(m, role) {
-  const _pax = m._passengers;
-  if (!_pax?.length) { showToast('No passengers aboard.', '#888'); return; }
-  if (m._dismountingAt && m._dismountingAt > Date.now()) { showToast('Already dismounting…', '#888'); return; }
-  const _pg = _pax.find(p => p.role === role && (p.count ?? 0) > 0);
-  if (!_pg) { showToast('No troops of that type aboard.', '#888'); return; }
-  m._dismountingAt = Date.now() + VEH_DISMOUNT_MS;
-  showToast(`Dismounting 1 ${ROLES[role]?.label ?? role} — ${Math.round(VEH_DISMOUNT_MS/1000)}s`, '#ffd54f');
-  unitLog(m, `Dismounting 1 ${ROLES[role]?.label ?? role}`);
-  renderPanel();
-  setTimeout(() => {
-    if (!allMarkers.includes(m)) return;
-    const _pg2 = (m._passengers ?? []).find(p => p.role === role && (p.count ?? 0) > 0);
-    if (!_pg2) return;
-    const pos = markerPos(m);
-    const _sol = _pg2.soldiers?.splice(0, 1)[0];
-    const nm = createMarker(pos, m._side, 1, role);
-    if (_sol) nm._soldiers = [_sol];
-    nm._uid = 'dis_' + Math.random().toString(36).slice(2);
-    nm._log = [];
-    unitLog(nm, `Dismounted from ${ROLES[m._role]?.label ?? 'vehicle'}`);
-    fbSyncUnit(nm);
-    _pg2.count -= 1;
-    if (_pg2.count <= 0) m._passengers = (m._passengers ?? []).filter(p => p !== _pg2);
-    m._dismountingAt = 0;
-    unitLog(m, 'Single dismount complete');
-    fbSyncUnit(m);
-    spreadColocatedMarkers();
     if (activePanel === m) renderPanel();
   }, VEH_DISMOUNT_MS);
 }
@@ -4591,52 +4540,26 @@ function doEmbark(infantry, vehicle) {
   const _aboard = vehicle._passengers?.reduce((s,p)=>s+(p.count??0),0) ?? 0;
   if (_aboard >= _cap) { showToast('Vehicle at capacity.', '#888'); return; }
   if (activeFights.has(infantry)) { showToast('Cannot board while in combat.', '#ef9a9a'); return; }
-  const _totalCount = infantry._count;
-  const _perMs = Math.max(600, Math.round(5000 / TIME_SCALE));
-  const _totalMs = _perMs * _totalCount;
-  showToast(`Boarding… ${Math.round(_totalMs / 1000)}s`, '#ffd54f');
-  unitLog(infantry, `Boarding ${ROLES[vehicle._role]?.label ?? 'vehicle'} (∝${Math.round(_totalMs / 1000)}s)`);
-  const _solList = infantry._soldiers ? [...infantry._soldiers] : [];
-  let _boarded = 0;
-  function _boardOne() {
+  const _boardMs = 8000 / TIME_SCALE;
+  showToast(`Boarding… ${Math.round(_boardMs/1000)}s`, '#ffd54f');
+  unitLog(infantry, `Boarding ${ROLES[vehicle._role]?.label ?? 'vehicle'} (∝${Math.round(_boardMs/1000)}s)`);
+  renderPanel();
+  setTimeout(() => {
     if (!allMarkers.includes(infantry) || !allMarkers.includes(vehicle)) return;
-    const _sol = _solList[_boarded] ?? { id: _boarded, alive: true, hp: 100 };
-    _boarded++;
     vehicle._passengers = vehicle._passengers ?? [];
     const _ex = vehicle._passengers.find(p => p.role === infantry._role);
-    if (_ex) {
-      _ex.count = (_ex.count ?? 0) + 1;
-      if (!_ex.soldiers) _ex.soldiers = [];
-      _ex.soldiers.push(_sol);
-    } else {
-      vehicle._passengers.push({ role: infantry._role, count: 1, soldiers: [_sol] });
-    }
-    if (_boarded >= _totalCount) {
-      unitLog(vehicle, `${_totalCount} ${ROLES[infantry._role]?.label ?? 'troops'} boarded`);
-      const _idx = allMarkers.indexOf(infantry);
-      if (_idx >= 0) allMarkers.splice(_idx, 1);
-      map.removeLayer(infantry);
-      if (activePanel === infantry) closePanel();
-      fbRemoveUnit(infantry);
-      _fbKillUnit(infantry);
-    } else {
-      infantry._count -= 1;
-      const _el = infantry.getElement();
-      if (_el) {
-        _el.style.transition = `opacity ${Math.round(_perMs * 0.35)}ms`;
-        _el.style.opacity = '0.2';
-        setTimeout(() => { if (_el.isConnected) { _el.style.opacity = '1'; _el.style.transition = ''; } }, Math.round(_perMs * 0.35));
-      }
-      if (activePanel === infantry) renderPanel();
-      setTimeout(_boardOne, _perMs);
-    }
+    if (_ex) _ex.count = (_ex.count ?? 0) + infantry._count;
+    else vehicle._passengers.push({ role: infantry._role, count: infantry._count });
+    unitLog(vehicle, `${infantry._count} ${ROLES[infantry._role]?.label ?? 'troops'} boarded`);
+    const _idx = allMarkers.indexOf(infantry);
+    if (_idx >= 0) allMarkers.splice(_idx, 1);
+    map.removeLayer(infantry);
+    if (activePanel === infantry) closePanel();
+    fbRemoveUnit(infantry); // remove infantry from Firebase on all clients
+    _fbKillUnit(infantry);  // broadcast kill to avoid race with snapshot
     fbSyncUnit(vehicle);
     if (activePanel === vehicle) renderPanel();
-  }
-  renderPanel();
-  const _startEl = infantry.getElement();
-  if (_startEl) { _startEl.style.transition = `opacity ${Math.round(_perMs * 0.3)}ms`; _startEl.style.opacity = '0.55'; }
-  setTimeout(_boardOne, _perMs);
+  }, _boardMs);
 }
 
 // Fan out units that share the same ~20m grid cell so they're individually selectable
@@ -5343,7 +5266,6 @@ function rebuildHandles(state) {
   state.vertices?.forEach(v => map.removeLayer(v));
   state.splits?.forEach(h => map.removeLayer(h));
   state.vertices = []; state.splits = [];
-  if (state.marker._side !== userSide && !_adminAuthed) return; // never show enemy route handles
   const base = state.seg + 1;
   state.route.slice(base).forEach((pt, i) => {
     const routeIdx = base + i;
@@ -5603,21 +5525,9 @@ map.on('click', (e) => {
   if (combatMode === 'area-suppress') { executeAreaSuppress(combatActor, e.latlng); return; }
   if (combatMode === 'he-ground') { executeHEFire(combatActor, e.latlng); return; }
   if (!drawMode) {
+    // Guard: if click originated from a marker (within last 200ms), don't steal focus
     if (Date.now() - _markerClickAt < 200) return;
-    // Multi-select: single map click moves all selected units to that point
-    if (selectedMarkers.size > 0) {
-      if (!pointInBoundary(e.latlng.lat, e.latlng.lng)) { showToast('Outside game boundary', '#ef5350'); return; }
-      const _dest = [e.latlng.lat, e.latlng.lng];
-      let _selOff = 0;
-      selectedMarkers.forEach(sm => {
-        assignRoute(sm, [markerPos(sm), [_dest[0] + _selOff * 0.00005, _dest[1] + _selOff * 0.00005]]);
-        _selOff++;
-      });
-      selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline'));
-      selectedMarkers.clear();
-      saveState();
-      return;
-    }
+    // If a unit is selected and user clicks the map, start drawing its route
     if (activeMarker && activePanel) { beginDrawForSelected(e.latlng); return; }
     closePanel(); return;
   }
@@ -5659,50 +5569,9 @@ map.on('mousemove', (e) => {
 document.getElementById('ruler-btn').addEventListener('click', toggleRuler);
 document.getElementById('annotate-btn').addEventListener('click', toggleAnnotate);
 
-map.on('mousedown', (e) => {
-  if (!e.originalEvent.shiftKey) return;
-  if (drawMode || rulerMode || annotateMode || patrolMode || convoyRouteMode ||
-      _adminPlacing || _placingDeployPoint || _drawingDeployRoute || _settingFallback ||
-      boundingState || searchAreaMode || combatMode) return;
-  map.dragging.disable();
-  if (map.boxZoom) map.boxZoom.disable();
-  _selBoxStart = e.latlng;
-  _selBoxMoved = false;
-  L.DomEvent.preventDefault(e.originalEvent);
-});
-map.on('mousemove', (e) => {
-  if (!_selBoxStart) return;
-  const _dx = Math.abs(e.latlng.lat - _selBoxStart.lat) + Math.abs(e.latlng.lng - _selBoxStart.lng);
-  if (_dx > 0.00005) _selBoxMoved = true;
-  if (!_selBoxMoved) return;
-  const _rb = L.latLngBounds(_selBoxStart, e.latlng);
-  if (_selBox) { _selBox.setBounds(_rb); }
-  else { _selBox = L.rectangle(_rb, { color: '#ffeb3b', weight: 1.5, fillOpacity: 0.07, dashArray: '6 4', interactive: false }).addTo(map); }
-});
-map.on('mouseup', (e) => {
-  if (!_selBoxStart) return;
-  map.dragging.enable();
-  if (map.boxZoom) map.boxZoom.enable();
-  const _start = _selBoxStart;
-  _selBoxStart = null;
-  if (_selBox) { map.removeLayer(_selBox); _selBox = null; }
-  if (!_selBoxMoved) return;
-  const _rb = L.latLngBounds(_start, e.latlng);
-  let _cnt = 0;
-  allMarkers.forEach(m => {
-    if (m._side !== userSide) return;
-    if (_rb.contains(m.getLatLng())) {
-      selectedMarkers.add(m);
-      m.getElement()?.style.setProperty('outline', '2px solid #ffeb3b');
-      _cnt++;
-    }
-  });
-  if (_cnt > 0) showToast(_cnt + ' unit(s) selected — draw route or shift+click more', '#ffd54f');
-});
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     clearTimeout(clickTimer); clickTimer = null;
-    if (selectedMarkers.size) { selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline')); selectedMarkers.clear(); return; }
     if (convoyRouteMode) { cancelConvoyRoute(); return; }
     if (patrolMode) { cancelPatrol(); return; }
     if (_placingDeployPoint) { _placingDeployPoint = false; document.getElementById('dep-btn').classList.remove('ruler-on'); setStatus(''); return; }
@@ -5731,19 +5600,7 @@ document.addEventListener('keydown', (e) => {
     if (searchAreaMode && searchAreaPoints.length >= 3) { finishSearchArea(); return; }
     if (drawMode && drawPoints.length >= 2) {
       clearTimeout(clickTimer); clickTimer = null;
-      assignRoute(activeMarker, [...drawPoints]);
-      if (selectedMarkers.size > 0) {
-        let _selOff = 1;
-        selectedMarkers.forEach(sm => {
-          if (sm !== activeMarker) {
-            assignRoute(sm, drawPoints.map(p => [p[0] + _selOff * 0.00006, p[1] + _selOff * 0.00006]));
-            _selOff++;
-          }
-        });
-        selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline'));
-        selectedMarkers.clear();
-      }
-      saveState();
+      assignRoute(activeMarker, [...drawPoints]); saveState();
       cancelDraw(); closePanel();
     }
   }
@@ -5754,7 +5611,7 @@ document.addEventListener('keydown', (e) => {
       if (!pendingSplitCount || pendingSplitCount >= activePanel._count) {
         pendingSplitCount = Math.ceil(activePanel._count / 2);
       } else if (pendingSplitCount <= 1) {
-        // already at minimum – do nothing
+        pendingSplitCount = Math.ceil(activePanel._count / 2); // wrap back
       } else {
         pendingSplitCount = Math.max(1, Math.ceil(pendingSplitCount / 2));
       }
@@ -6297,7 +6154,7 @@ function createMarker(pt, side, count, role = '') {
   else if (role === 'fpv') {
     m._drones = 3 + Math.floor(Math.random() * 3); m._maxDrones = FPV_MAX_DRONES;
     m._soldiers = [mkSoldier('fpv_pilot',0), mkSoldier('fpv_spotter',1), mkSoldier('fpv_driver',2)];
-    m._count = (count > 0) ? count : 3;
+    m._count = 3;
     m._ammo    = m._soldiers.reduce((s, sol) => s + sol.ammo, 0);
     m._maxAmmo = m._soldiers.reduce((s, sol) => s + sol.ammo, 0);
   }
@@ -6333,22 +6190,7 @@ function createMarker(pt, side, count, role = '') {
   if (side === userSide) {
     m.dragging.enable();
     m.on('dragend', () => { saveState(); fbSyncUnit(m); });
-    m.on('click', (e) => {
-          e.originalEvent?.stopPropagation(); _markerClickAt = Date.now();
-          if (e.originalEvent?.shiftKey) {
-            if (selectedMarkers.has(m)) { selectedMarkers.delete(m); m.getElement()?.style.removeProperty('outline'); }
-            else { selectedMarkers.add(m); m.getElement()?.style.setProperty('outline', '2px solid #ffeb3b'); }
-            return;
-          }
-          if (selectedMarkers.size > 1 && selectedMarkers.has(m)) {
-            activeMarker = m; drawMode = true; drawPoints = [];
-            setStatus('Draw route for ' + selectedMarkers.size + ' selected units — Enter to confirm');
-            return;
-          }
-          selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline'));
-          selectedMarkers.clear();
-          selectForRoute(m);
-        });
+    m.on('click', (e) => { e.originalEvent?.stopPropagation(); _markerClickAt = Date.now(); selectForRoute(m); });
   }
   return m;
 }
@@ -6444,17 +6286,6 @@ function initFirebase() {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       _fbDb = firebase.database();
 
-      // Wipe stale Firebase units when a fresh spawn just happened
-      var _clearingFb = false;
-      if (window._didFreshSpawn) {
-        window._didFreshSpawn = false;
-        _clearingFb = true;
-        Promise.all([
-          _fbDb.ref('units_blue').remove().catch(function() {}),
-          _fbDb.ref('units_red').remove().catch(function() {})
-        ]).then(function() { _clearingFb = false; });
-      }
-
       // Show connection state
       _fbDb.ref('.info/connected').on('value', function(snap) {
         _syncLog(snap.val() ? 'connected ✓' : 'disconnected ✗');
@@ -6468,15 +6299,11 @@ function initFirebase() {
           var n = Object.keys(all).length;
           var remote = Object.values(all).filter(function(d) { return d && d.clientId !== _fbClientId; }).length;
           _syncLog('rcv ' + side + ': ' + n + ' total, ' + remote + ' remote');
-          if (_clearingFb) return; // Firebase clear in progress — ignore stale snapshot
           if (!_fbInitSnapshotDone[side] && n > 0) {
             _fbInitSnapshotDone[side] = true;
-            var _hasCascade = Object.values(all).some(function(u) { return u && (u.count || 1) > 1; });
-            if (!_hasCascade) {
-              var _fbUidSet = new Set(Object.keys(all));
-              for (var _om of [...allMarkers]) {
-                if (_om._side === side && _om._uid && !_fbUidSet.has(_om._uid)) removeUnit(_om);
-              }
+            var _fbUidSet = new Set(Object.keys(all));
+            for (var _om of [...allMarkers]) {
+              if (_om._side === side && _om._uid && !_fbUidSet.has(_om._uid)) removeUnit(_om);
             }
           }
           fbApplySideSnapshot(side, all);
@@ -6568,7 +6395,6 @@ function fbPushMySide() {
         ammo: m._ammo != null ? m._ammo : null,
         hp: m._hp != null ? m._hp : null,
         mangalHp: m._mangalHp != null ? m._mangalHp : null,
-        passengers: m._passengers ? JSON.stringify(m._passengers) : null,
       };
     }
     var n = Object.keys(updates).length;
@@ -6604,7 +6430,6 @@ function fbSyncAnyUnit(m) {
     ammo: m._ammo != null ? m._ammo : null,
     hp: m._hp != null ? m._hp : null,
     mangalHp: m._mangalHp != null ? m._mangalHp : null,
-    passengers: m._passengers ? JSON.stringify(m._passengers) : null,
   }).catch(function() {});
 }
 
@@ -6645,8 +6470,8 @@ function fbApplyUnit(d) {
         movingMarkers.delete(existing);
       }
       existing.setLatLng(d.route[0]);
-      var _showExRoute = (existing._side === userSide || _adminAuthed);
-      var rLine = _showExRoute ? L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map) : null;
+      var _rLineOp = (existing._side !== userSide && !_adminAuthed) ? 0 : 0.95;
+      var rLine = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLineOp}).addTo(map);
       movingMarkers.set(existing, {marker:existing, route:d.route, seg:0, t:0, line:rLine, vertices:[], splits:[]});
       existing.dragging.disable();
     } else {
@@ -6659,7 +6484,7 @@ function fbApplyUnit(d) {
       }
       existing.setLatLng([d.lat, d.lng]);
     }
-    if (d.count != null && d.count !== existing._count && d.count <= (existing._count || 1)) {
+    if (d.count != null && d.count !== existing._count) {
       existing._count = d.count;
       if (d.count === 0) { removeUnit(existing); return; }  // unit destroyed on other client
       existing.setIcon(soldierIcon(existing._side, d.count, existing._role, existing._mangalHp ?? null));
@@ -6671,15 +6496,9 @@ function fbApplyUnit(d) {
       existing._mangalHp = d.mangalHp;
       existing.setIcon(soldierIcon(existing._side, existing._count, existing._role, existing._mangalHp ?? null));
     }
-    if (d.passengers) { try { existing._passengers = JSON.parse(d.passengers); } catch(_pe) {} }
   } else if (d.uid && d.side && d.role && d.lat != null && d.lng != null) {
     if ((d.count ?? 1) <= 0) return; // never recreate a unit with count 0
     if (_killedUidCache.has(d.uid)) return; // already destroyed this session
-    if ((d.count || 1) > 1) {
-      // stale cascade entry — delete it from Firebase permanently
-      if (_fbDb && d.uid && d.side) try { _fbDb.ref('units_' + d.side + '/' + d.uid).remove(); } catch(e) {}
-      return;
-    }
     var m2 = createMarker([d.lat, d.lng], d.side, d.count || 1, d.role);
     m2._uid = d.uid;
     m2._clientId = d.clientId;
@@ -6687,18 +6506,17 @@ function fbApplyUnit(d) {
     if (d.ammo != null) m2._ammo = d.ammo;
     if (d.hp != null) m2._hp = d.hp;
     if (d.mangalHp != null) { m2._mangalHp = d.mangalHp; m2.setIcon(soldierIcon(m2._side, m2._count, m2._role, m2._mangalHp)); }
-    if (d.passengers) { try { m2._passengers = JSON.parse(d.passengers); } catch(_pe) {} }
     if (d.route && d.route.length >= 2) {
-      var _showRoute2 = (m2._side === userSide || _adminAuthed);
-      var rLine2 = _showRoute2 ? L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map) : null;
+      var _rLine2Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
+      var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine2Op}).addTo(map);
       movingMarkers.set(m2, {marker:m2, route:d.route, seg:0, t:0, line:rLine2, vertices:[], splits:[]});
       m2.dragging.disable();
     } else {
       try {
         var _ssRoute = JSON.parse(sessionStorage.getItem('_rt_' + d.uid));
         if (_ssRoute && _ssRoute.length >= 2) {
-          var _showRoute3 = (m2._side === userSide || _adminAuthed);
-          var rLine3 = _showRoute3 ? L.polyline(_ssRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map) : null;
+          var _rLine3Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
+          var rLine3 = L.polyline(_ssRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine3Op}).addTo(map);
           movingMarkers.set(m2, {marker:m2, route:_ssRoute, seg:0, t:0, line:rLine3, vertices:[], splits:[]});
           m2.dragging.disable();
         }
@@ -6737,7 +6555,7 @@ function openAdminPanel() {
     _adminAuthed = true;
   }
   const existing = document.getElementById('admin-panel');
-  if (existing) { existing.remove(); _adminStopPlacing(); document.body.classList.remove('admin-mode'); return; }
+  if (existing) { existing.remove(); _adminStopPlacing(); return; }
   _renderAdminPanel();
   document.body.classList.add('admin-mode');  // CSS override reveals all markers
 }
@@ -6880,9 +6698,9 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-16-CEX';
-  const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
-  const SPAWN_KEY = '2026-09-16-v20'; // change to force a new unit layout
+const VERSION = '2026-09-16-RESTORE';
+  const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
+  const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
   function seededRand(str) {
     let h = 2166136261 >>> 0;
@@ -7681,11 +7499,14 @@ async function main() {
     }
 
     function groupSize(role) {
-      return 1; // all units spawn as individuals (count=1 per marker)
+      if (['fpv','mavic'].includes(role)) return 3 + Math.floor(Math.random() * 2); // 3-4
+      if (role === 'artillery') return 3 + Math.floor(Math.random() * 3);           // 3-5
+      if (role === 'mortar')    return 2 + Math.floor(Math.random() * 2);           // 2-3
+      return 2 + Math.floor(Math.random() * 4); // 2-5
     }
 
     // per-role minimum separation (degrees) to avoid clustering
-    const ROLE_SEP = { infantry: 0.006, mortar: 0.008, mavic: 0.014, fpv: 0.014, artillery: 0.018, tank: 0.010, ifv: 0.010, apc: 0.010 };
+    const ROLE_SEP = { infantry: 0.006, mortar: 0.008, mavic: 0.014, fpv: 0.014, artillery: 0.018 };
     const roleOccupied = {}; // "role+side" → [pts]
 
     function markOccupied(pt, role, northSide) {
@@ -7750,8 +7571,8 @@ async function main() {
 
     _ltxt('Placing units… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
-    // 3 artillery per side
-    for (let i = 0; i < 3; i++) {
+    // Guarantee at least 2 artillery per side before random pool
+    for (let i = 0; i < 2; i++) {
       for (const [northSide, side] of [[true,'blue'],[false,'red']]) {
         const pt = pickSpotSep(northSide, 'artillery');
         if (pt) { markOccupied(pt, 'artillery', northSide); createMarker(pt, side, groupSize('artillery'), 'artillery'); }
@@ -7761,7 +7582,7 @@ async function main() {
     _ltxt('Blue forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Blue infantry core (10-13 units) ──
-    const numBlueInf = 3;
+    const numBlueInf = 10 + Math.floor(Math.random() * 4);
     for (let i = 0; i < numBlueInf; i++) {
       const pt = pickSpotSep(true, 'infantry');
       if (!pt) continue;
@@ -7769,7 +7590,7 @@ async function main() {
       createMarker(pt, 'blue', groupSize('infantry'), 'infantry');
     }
     // ── Blue mortars (3-4 units) ──
-    const numBlueMortar = 3;
+    const numBlueMortar = 3 + Math.floor(Math.random() * 2);
     for (let i = 0; i < numBlueMortar; i++) {
       const pt = pickSpotSep(true, 'mortar');
       if (!pt) continue;
@@ -7777,7 +7598,7 @@ async function main() {
       createMarker(pt, 'blue', groupSize('mortar'), 'mortar');
     }
     // ── Blue mavics (~1 per horizontal km ≈ 22-26 units) ──
-    const numBlueMavic = 3;
+    const numBlueMavic = 22 + Math.floor(Math.random() * 5);
     for (let i = 0; i < numBlueMavic; i++) {
       const pt = pickSpotSep(true, 'mavic');
       if (!pt) continue;
@@ -7788,7 +7609,7 @@ async function main() {
     _ltxt('Red forces… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
     // ── Red infantry core (14-18 units) ──
-    const numRedInf = 3;
+    const numRedInf = 14 + Math.floor(Math.random() * 5);
     for (let i = 0; i < numRedInf; i++) {
       const pt = pickSpotSep(false, 'infantry');
       if (!pt) continue;
@@ -7796,7 +7617,7 @@ async function main() {
       createMarker(pt, 'red', groupSize('infantry'), 'infantry');
     }
     // ── Red mortars (4-5 units) ──
-    const numRedMortar = 3;
+    const numRedMortar = 4 + Math.floor(Math.random() * 2);
     for (let i = 0; i < numRedMortar; i++) {
       const pt = pickSpotSep(false, 'mortar');
       if (!pt) continue;
@@ -7804,7 +7625,7 @@ async function main() {
       createMarker(pt, 'red', groupSize('mortar'), 'mortar');
     }
     // ── Red mavics (reduced) ──
-    const numRedMavic = 3;
+    const numRedMavic = 8 + Math.floor(Math.random() * 5);
     for (let i = 0; i < numRedMavic; i++) {
       const pt = pickSpotSep(false, 'mavic');
       if (!pt) continue;
@@ -7813,7 +7634,12 @@ async function main() {
     }
 
     // ── Extra infantry close to line (1-2.5 km band), 6 per side ──
-    // close-line infantry disabled (all infantry already spawned above)
+    for (let i = 0; i < 6; i++) {
+      const bPt = pickBand(true,  1.0, 2.5);
+      if (bPt) { markOccupied(bPt, 'infantry', true);  createMarker(bPt, 'blue', groupSize('infantry'), 'infantry'); }
+      const rPt = pickBand(false, 1.0, 2.5);
+      if (rPt) { markOccupied(rPt, 'infantry', false); createMarker(rPt, 'red',  groupSize('infantry'), 'infantry'); }
+    }
 
     _ltxt('FPV crews… +' + _ts());
     await new Promise(r => requestAnimationFrame(r));
@@ -7822,7 +7648,7 @@ async function main() {
       const side = northSide ? 'blue' : 'red';
       const infCount = allMarkers.filter(m => m._side === side && m._role === 'infantry').length;
       const fpvCount = allMarkers.filter(m => m._side === side && m._role === 'fpv').length;
-      const needed   = 3 - fpvCount; // exactly 3 FPV crews per side
+      const needed   = Math.floor(infCount / 3) - fpvCount;
       for (let i = 0; i < needed; i++) {
         const pt = pickSpotSep(northSide, 'fpv');
         if (!pt) continue;
@@ -7831,26 +7657,6 @@ async function main() {
       }
     }
 
-    // Guarantee exactly 3 of each non-vehicle role per side
-    { const _G3 = ['infantry','mortar','mavic','fpv','artillery'];
-      for (const [_gNs, _gSide] of [[true,'blue'],[false,'red']]) {
-        const _gFallback = [CENTER[0] + (_gNs ? 0.04 : -0.04), CENTER[1]];
-        for (const _gRole of _G3) {
-          const _gArr = allMarkers.filter(m => m._side === _gSide && m._role === _gRole);
-          while (_gArr.length < 3) {
-            const _gAnch = (_gArr.length > 0 ? _gArr[_gArr.length - 1] : null)
-                        || allMarkers.find(m => m._side === _gSide);
-            const [_gLat, _gLng] = _gAnch ? markerPos(_gAnch) : _gFallback;
-            const _gAng = (_gArr.length % 3) * 2.094;
-            const _gNm = createMarker(
-              [_gLat + Math.cos(_gAng) * 0.012, _gLng + Math.sin(_gAng) * 0.012],
-              _gSide, 1, _gRole
-            );
-            _gArr.push(_gNm);
-          }
-        }
-      }
-    }
     Math.random = _origMathRand;
 
     // ── Armored vehicles — spawned with real random after seeded section ──
@@ -7873,13 +7679,10 @@ async function main() {
     }
 
     _spawnUidCounter = -1;
-    window._didFreshSpawn = true; // tell initFirebase to wipe stale Firebase units
-    // Remove old spawn cache keys before saving the new one
-    try { for (var _ck in localStorage) { if (_ck.startsWith('spawn_v2_') && _ck !== _SCKEY) localStorage.removeItem(_ck); } } catch {}
     // Persist spawn for instant restore on next load
     try {
       localStorage.setItem(_SCKEY, JSON.stringify(
-        allMarkers.map(m => ({ pos: markerPos(m), side: m._side, count: m._count, role: m._role, uid: m._uid }))
+        allMarkers.map(m => ({ pos: markerPos(m), side: m._side, count: m._count, role: m._role }))
       ));
     } catch {}
     } else {
@@ -7887,8 +7690,7 @@ async function main() {
     _ltxt('Restoring units… +' + _ts());
     for (let _ci = 0; _ci < _scData.length; _ci++) {
       const _cu = _scData[_ci];
-      const _crm = createMarker(_cu.pos, _cu.side, _cu.count, _cu.role);
-      if (_cu.uid) _crm._uid = _cu.uid;
+      createMarker(_cu.pos, _cu.side, _cu.count, _cu.role);
       if (_ci % 10 === 9) {
         document.getElementById('loading-text').textContent =
           'Restoring units… (' + (_ci + 1) + '/' + _scData.length + ')';
@@ -7896,7 +7698,6 @@ async function main() {
       }
     }
     } // end spawn cache if/else
-    setTimeout(spreadColocatedMarkers, 400); // fan out stacked units after spawn
 
     // Pre-hide all enemy markers before the loading overlay drops
     for (const _m of allMarkers) {
