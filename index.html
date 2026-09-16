@@ -5343,6 +5343,7 @@ function rebuildHandles(state) {
   state.vertices?.forEach(v => map.removeLayer(v));
   state.splits?.forEach(h => map.removeLayer(h));
   state.vertices = []; state.splits = [];
+  if (state.marker._side !== userSide && !_adminAuthed) return; // never show enemy route handles
   const base = state.seg + 1;
   state.route.slice(base).forEach((pt, i) => {
     const routeIdx = base + i;
@@ -6644,8 +6645,8 @@ function fbApplyUnit(d) {
         movingMarkers.delete(existing);
       }
       existing.setLatLng(d.route[0]);
-      var _rLineOp = (existing._side !== userSide && !_adminAuthed) ? 0 : 0.95;
-      var rLine = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLineOp}).addTo(map);
+      var _showExRoute = (existing._side === userSide || _adminAuthed);
+      var rLine = _showExRoute ? L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map) : null;
       movingMarkers.set(existing, {marker:existing, route:d.route, seg:0, t:0, line:rLine, vertices:[], splits:[]});
       existing.dragging.disable();
     } else {
@@ -6688,16 +6689,16 @@ function fbApplyUnit(d) {
     if (d.mangalHp != null) { m2._mangalHp = d.mangalHp; m2.setIcon(soldierIcon(m2._side, m2._count, m2._role, m2._mangalHp)); }
     if (d.passengers) { try { m2._passengers = JSON.parse(d.passengers); } catch(_pe) {} }
     if (d.route && d.route.length >= 2) {
-      var _rLine2Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
-      var rLine2 = L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine2Op}).addTo(map);
+      var _showRoute2 = (m2._side === userSide || _adminAuthed);
+      var rLine2 = _showRoute2 ? L.polyline(d.route, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map) : null;
       movingMarkers.set(m2, {marker:m2, route:d.route, seg:0, t:0, line:rLine2, vertices:[], splits:[]});
       m2.dragging.disable();
     } else {
       try {
         var _ssRoute = JSON.parse(sessionStorage.getItem('_rt_' + d.uid));
         if (_ssRoute && _ssRoute.length >= 2) {
-          var _rLine3Op = (m2._side !== userSide && !_adminAuthed) ? 0 : 0.95;
-          var rLine3 = L.polyline(_ssRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:_rLine3Op}).addTo(map);
+          var _showRoute3 = (m2._side === userSide || _adminAuthed);
+          var rLine3 = _showRoute3 ? L.polyline(_ssRoute, {color:'#ff9500',weight:3,dashArray:'10 6',opacity:0.95}).addTo(map) : null;
           movingMarkers.set(m2, {marker:m2, route:_ssRoute, seg:0, t:0, line:rLine3, vertices:[], splits:[]});
           m2.dragging.disable();
         }
@@ -6736,7 +6737,7 @@ function openAdminPanel() {
     _adminAuthed = true;
   }
   const existing = document.getElementById('admin-panel');
-  if (existing) { existing.remove(); _adminStopPlacing(); return; }
+  if (existing) { existing.remove(); _adminStopPlacing(); document.body.classList.remove('admin-mode'); return; }
   _renderAdminPanel();
   document.body.classList.add('admin-mode');  // CSS override reveals all markers
 }
@@ -6879,7 +6880,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-16-CEW';
+const VERSION = '2026-09-16-CEX';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v20'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
