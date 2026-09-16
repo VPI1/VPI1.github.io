@@ -5568,6 +5568,7 @@ map.on('click', (e) => {
     // Guard: if click originated from a marker (within last 200ms), don't steal focus
     if (Date.now() - _markerClickAt < 200) return;
     if (selectedMarkers.size > 0) {
+      if (e.originalEvent?.shiftKey) return;
       if (!pointInBoundary(e.latlng.lat, e.latlng.lng)) { showToast('Outside game boundary', '#ef5350'); return; }
       const _dest = [e.latlng.lat, e.latlng.lng];
       let _selOff = 0;
@@ -6825,7 +6826,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-16-RESTORE2';
+const VERSION = '2026-09-16-RESTORE3';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
