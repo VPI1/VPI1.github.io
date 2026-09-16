@@ -2304,6 +2304,7 @@ function unitLog(m, text) {
 
 // ── unit removal / damage ─────────────────────────────────────
 function removeUnit(marker) {
+  if (window._gd) window._gd.log('removeUnit: ' + (marker&&marker._side) + '/' + (marker&&marker._role) + ' uid=' + (marker&&marker._uid));
   if (window._gd) window._gd.log("removeUnit: " + (marker&&marker._side) + "/" + (marker&&marker._role) + " uid=" + (marker&&marker._uid));
   if (marker._artPending) { map.removeLayer(marker._artPending.aimCircle); marker._artPending = null; }
   if (marker._supply?.convoyMarker) { map.removeLayer(marker._supply.convoyMarker); marker._supply = null; }
@@ -6269,13 +6270,21 @@ window._gd = {
   events: [],
   log: function(msg) { this.events.push('[' + new Date().toISOString().slice(11,23) + '] ' + msg); console.log('[DIAG] ' + msg); },
   markersTable: function() {
-    var r = {}; (window.allMarkers||[]).forEach(function(m){var k=m._side+'/'+m._role;r[k]=(r[k]||0)+1;});return r;
+    var r = {}; (window._allMarkers||window.allMarkers||[]).forEach(function(m){var k=m._side+'/'+m._role;r[k]=(r[k]||0)+1;});return r;
   },
   cacheTable: function() {
-    var keys = []; for(var k in localStorage) if(k.startsWith('spawn_v2_')) keys.push(k);
-    var r = {}; keys.forEach(function(k){
-      try { var d=JSON.parse(localStorage.getItem(k)); if(Array.isArray(d)) d.forEach(function(u){var kk=u.side+'/'+u.role;r[kk]=(r[kk]||0)+1;}); r['__key__']=k; } catch(e) {}
-    }); return r;
+    var r = {};
+    for(var k in localStorage) {
+      if(!k.startsWith('spawn_v2_')) continue;
+      try {
+        var d = JSON.parse(localStorage.getItem(k));
+        if (!Array.isArray(d)) continue;
+        var kCounts = {};
+        d.forEach(function(u){var kk=u.side+'/'+u.role;kCounts[kk]=(kCounts[kk]||0)+1;});
+        r[k] = kCounts;  // group by cache key, don't merge
+      } catch(e) {}
+    }
+    return r;
   },
   show: function() {
     var existing = document.getElementById('_gdOverlay');
@@ -6287,8 +6296,13 @@ window._gd = {
     lines.push('allMarkers breakdown:');
     var am = this.markersTable(); Object.keys(am).sort().forEach(function(k){lines.push('  '+k+': '+am[k]);});
     lines.push('');
-    lines.push('localStorage spawn cache:');
-    var cm = this.cacheTable(); Object.keys(cm).sort().forEach(function(k){lines.push('  '+k+': '+cm[k]);});
+    lines.push('localStorage spawn cache (each key separately):');
+    var cm = this.cacheTable();
+    Object.keys(cm).sort().forEach(function(cacheKey) {
+      lines.push('  KEY: ' + cacheKey);
+      var kv = cm[cacheKey];
+      Object.keys(kv).sort().forEach(function(role){lines.push('    '+role+': '+kv[role]);});
+    });
     lines.push('');
     lines.push('Spawn events ('+this.events.length+'):');
     this.events.forEach(function(e){lines.push('  '+e);});
@@ -6520,6 +6534,10 @@ function initFirebase() {
             }
           }
           fbApplySideSnapshot(side, all);
+          var _diagPost = (window._allMarkers||[]);
+          window._gd.log('POST-fbApply ' + side + ': allMarkers=' + _diagPost.length
+            + ' blue=' + _diagPost.filter(function(m){return m._side==='blue';}).length
+            + ' red='  + _diagPost.filter(function(m){return m._side==='red';}).length);
           if (side === userSide) _fbSnapshotReady = true;
         });
       });
@@ -6920,7 +6938,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-15-CEDIAG';
+const VERSION = '2026-09-15-CEDIAG2';
   const GLOBAL_RESET_TS = 1789478788519; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-15-v19'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7939,6 +7957,10 @@ async function main() {
       }
     }
     } // end spawn cache if/else
+    window._allMarkers = allMarkers; // expose for diagnostic
+    window._gd.log('POST-SPAWN allMarkers total=' + allMarkers.length
+      + ' blue=' + allMarkers.filter(m=>m._side==='blue').length
+      + ' red='  + allMarkers.filter(m=>m._side==='red').length);
     setTimeout(spreadColocatedMarkers, 400); // fan out stacked units after spawn
 
     // Pre-hide all enemy markers before the loading overlay drops
