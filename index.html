@@ -314,15 +314,15 @@ function loadFirebaseSDK(cb) {
 <style>
 #cas-box{position:fixed;bottom:40px;left:10px;z-index:2000;background:rgba(20,20,30,0.88);
   border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:6px 10px;font:12px/1.5 monospace;
-  color:#e0e0e0;min-width:160px;pointer-events:none;display:none}
+  color:#e0e0e0;min-width:160px;pointer-events:none}
 #cas-box .cas-title{font-size:10px;color:#90a4ae;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
 #cas-box .cas-own{color:#ef5350}
 #cas-box .cas-enemy{color:#ffb74d}
 </style>
 <div id="cas-box">
   <div class="cas-title">Casualties</div>
-  <div class="cas-own"  id="cas-own">Own: —</div>
-  <div class="cas-enemy" id="cas-enemy">Enemy (BDA): —</div>
+  <div class="cas-own"  id="cas-own">Own: 0</div>
+  <div class="cas-enemy" id="cas-enemy">Enemy (BDA): 0</div>
 </div>
 
 <div id="login">
@@ -2132,7 +2132,7 @@ function enterDirectFireMode(unit) {
 }
 
 function executeHEFire(attacker, latlng) {
-  exitCombatMode();
+  if (combatMode !== 'burst-fire') exitCombatMode(); // keep mode during burst
   if (!allMarkers.includes(attacker) || attacker._ammo <= 0) return;
   const _gun = VEHICLE_GUN[attacker._role];
   // Reload check (tank: 8s; IFV/APC: handled by burst interval)
@@ -5888,9 +5888,11 @@ map.on('mousemove', (e) => {
 });
 
 map.on('mouseup', (e) => {
-  if (combatMode === 'burst-fire') {
+  if (_vBurstInterval !== null) {
+    // Burst in progress — stop interval but KEEP burst-fire mode so player can hold again
     window._vBurstStop();
     map.dragging.enable();
+    if (activePanel) renderPanel();
     return;
   }
   if (!_selBoxStart) return;
@@ -7109,7 +7111,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-17-RESTORE8';
+const VERSION = '2026-09-17-RESTORE9';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7128,23 +7130,16 @@ window._vBurstStop = function() {
 };
 
 function _refreshCasBox() {
-  const box = document.getElementById('cas-box');
-  if (!box) return;
-  const _sd = userSide;
-  if (!_sd && !_adminAuthed) return;
-  box.style.display = 'block';
-  if (_sd) {
-    const _c = _casualties[_sd];
-    const ownEl = document.getElementById('cas-own');
-    const enEl  = document.getElementById('cas-enemy');
-    if (ownEl) ownEl.textContent = 'Own: ' + _c.own;
-    if (enEl)  enEl.textContent  = 'Enemy (BDA): ' + _c.enemyKnown;
-  } else {
-    // Admin: show both sides
-    const ownEl = document.getElementById('cas-own');
-    const enEl  = document.getElementById('cas-enemy');
-    if (ownEl) ownEl.textContent = 'Blue: ' + _casualties.blue.own + ' · Red: ' + _casualties.red.own;
-    if (enEl)  enEl.textContent  = 'Blue BDA: ' + _casualties.blue.enemyKnown + ' · Red BDA: ' + _casualties.red.enemyKnown;
+  const ownEl = document.getElementById('cas-own');
+  const enEl  = document.getElementById('cas-enemy');
+  if (!ownEl || !enEl) return;
+  if (userSide) {
+    const _c = _casualties[userSide];
+    ownEl.textContent = 'Own: ' + _c.own;
+    enEl.textContent  = 'Enemy (BDA): ' + _c.enemyKnown;
+  } else if (_adminAuthed) {
+    ownEl.textContent = 'Blue: ' + _casualties.blue.own + ' / Red: ' + _casualties.red.own;
+    enEl.textContent  = 'BDA Blue: ' + _casualties.blue.enemyKnown + ' / Red: ' + _casualties.red.enemyKnown;
   }
 }
 document.addEventListener('DOMContentLoaded', () => {
