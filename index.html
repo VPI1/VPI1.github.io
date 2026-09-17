@@ -312,7 +312,7 @@ function loadFirebaseSDK(cb) {
 </head>
 <body>
 <style>
-#cas-box{position:fixed;bottom:65px;right:10px;z-index:2000;background:rgba(20,20,30,0.88);
+#cas-box{position:fixed;bottom:40px;left:10px;z-index:2000;background:rgba(20,20,30,0.88);
   border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:6px 10px;font:12px/1.5 monospace;
   color:#e0e0e0;min-width:160px;pointer-events:none;display:none}
 #cas-box .cas-title{font-size:10px;color:#90a4ae;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
@@ -433,7 +433,7 @@ function loadFirebaseSDK(cb) {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const PASSWORDS = { 'aF49P2Zt': 'blue', 'q2Ro4614': 'red' };
-let userSide = null;
+let userSide = null; // set on side selection; _refreshCasBox re-called
 
 function tryLogin() {
   const val = document.getElementById('login-input').value;
@@ -1114,13 +1114,13 @@ const VEHICLE_GUN = {
     dmgPerShot: 1, baseHit: 0.55, armorPen: 0.50, mangalPenalty: 1.00,
     rangeM: 1000, burstRounds: 1, ammoPerBurst: 1, vehDmg: 1,
     coaxDmg: 0, coaxHit: 0, vsInfMult: 1.2,
-    label: '30mm 2A42', reloadMs: 250, burstFireMs: 250, splashHE: 7, splashAP: 3,
+    label: '30mm 2A42', reloadMs: 250, burstFireMs: 250, splashHE: 15, splashAP: 3,
   },
   apc: {
     dmgPerShot: 1, baseHit: 0.55, armorPen: 0.25, mangalPenalty: 1.00,
     rangeM: 800, burstRounds: 1, ammoPerBurst: 1, vehDmg: 0,
     coaxDmg: 0, coaxHit: 0, vsInfMult: 1.1,
-    label: '30mm 2A72/14.5mm KPV', reloadMs: 300, burstFireMs: 300, splashHE: 6, splashAP: 2,
+    label: '30mm 2A72/14.5mm KPV', reloadMs: 300, burstFireMs: 300, splashHE: 12, splashAP: 2,
   },
 };
 const MANGAL_STATS = {
@@ -1311,8 +1311,8 @@ function terrainVisualFactor(pt) {
 }
 
 // Battery constants — all in % per real second
-const MAVIC_BATT_PER_METER = 0.006;  // % per metre flown (100% → ~16.7 km range)
-const MAVIC_HOVER_BATT_PER_SEC = 1.8; // % per real second hovering
+const MAVIC_BATT_PER_METER = 0.003;  // DJI Matrice 300 RTK: ~33 km cruise range, safe 2-way ≈ 16 km
+const MAVIC_HOVER_BATT_PER_SEC = 0.0303; // DJI Matrice 300 RTK: ~55 min hover (100/3300)
 const MAVIC_BATT_SAFETY = 8;          // % kept in reserve for emergencies
 
 // ── supply & logistics system ──────────────────────────────────
@@ -2412,6 +2412,7 @@ function enterCombatMode(mode, actor, rangeKm, arcColor) {
   map.getContainer().style.cursor = 'crosshair';
 }
 function exitCombatMode() {
+  window._vBurstStop();
   combatMode = null; combatActor = null;
   if (combatArc) { map.removeLayer(combatArc); combatArc = null; }
   while (combatTargetHandlers.length) { const { m, h } = combatTargetHandlers.pop(); m.off('click', h); }
@@ -2804,14 +2805,7 @@ function _buildActTab(m, now, moving) {
         _pb('AP/APFSDS', '\u229E', _vAmmoAP ? 'atk on' : 'tac', "_pa('ammo-ap')") +
         _pb('HE', '\u229F', !_vAmmoAP ? 'atk on' : 'tac', "_pa('ammo-he')") +
         '</div>';
-      if (m._role === 'tank') {
-        // Tank keeps auto/single mode buttons
-        const _vFMauto = (m._fireMode ?? 'auto') === 'auto';
-        h += '<div style="display:flex;gap:4px;margin:0 0 4px">' +
-          _pb('Auto', '\u27f3', _vFMauto ? 'on' : 'tac', "_pa('fire-mode-auto')") +
-          _pb('Single shot', '\u229c', !_vFMauto ? 'on' : 'tac', "_pa('fire-mode-single')") +
-          '</div>';
-      }
+      // Tank: always single-shot (auto-fire guard in startFight)
       h += `<div class="pb-note" style="color:#888;font-size:10px">${_vGun?.label} · ${unitRangeM(m)}m range${m._role==='tank'?' · '+((_vGun?.reloadMs??0)/1000).toFixed(0)+'s reload':m._role==='ifv'?' · rapid burst':' · rapid burst'}${m._immobilized ? ' · immobilized' : ''}</div>`;
       if (m._role === 'tank' && (m._resupplyAt ?? 0) > now) h += `<div class="pb-note" style="color:#66bb6a;font-size:10px">Resupplying at TDP — next +1 rd in ${Math.ceil((m._resupplyAt - now) / 1000)}s</div>`;
       if (_vFight) {
@@ -2826,11 +2820,12 @@ function _buildActTab(m, now, moving) {
       }
       if (m._role === 'tank') {
         h += _pb(`${_vAmmoAP ? 'AP' : 'HE'} Direct Fire · click enemy`, _vAmmoAP ? '⊞' : '⊟', 'atk', "_pa('direct-fire')", m._ammo<=0 || (_vReloading??0) > now);
-        if (_vReloading > now) h += `<div class="pb-note" style="color:#ffd54f;font-size:10px">Reloading — ${Math.ceil((_vReloading-now)/1000)}s</div>`;
+        if (_vReloading > now) h += `<div class="pb-note" style="color:#ffd54f;font-size:10px">Reloading — <span id="tank-reload-timer">${Math.ceil((_vReloading-now)/1000)}s</span></div>`;
       } else {
-        // IFV/APC: hold-to-fire burst button
-        const _bfDis = m._ammo<=0 || !_vEn.length ? ' disabled' : '';
-        h += `<button class="pb atk"${_bfDis} onmousedown="window._vBurstStart('${m._uid}')" onmouseup="window._vBurstStop()" onmouseleave="window._vBurstStop()"><span class="pb-ic">⊞</span><span>${_vAmmoAP?'AP':'HE'} Hold to Fire${_vEn.length?' · '+_vEn.length+' target'+(1<_vEn.length?'s':''):' · none spotted'}</span></button>`;
+        // IFV/APC: enter burst-fire map mode
+        const _bfActive = combatMode === 'burst-fire' && combatActor === m;
+        h += _pb(`${_vAmmoAP?'AP':'HE'} Burst Fire Mode${_bfActive?' — FIRING':' · hold LMB on map'}`, '⊞',
+          _bfActive ? 'atk on' : 'atk', "_pa('burst-fire-mode')", m._ammo<=0);
       }
       const _vHold = m._conds?.holdPos;
       h += _pb(_vHold ? 'Release Hold Position' : 'Hold Position', '⬙', _vHold?'on':'tac', "_pa('hold-toggle')");
@@ -3391,6 +3386,13 @@ window._pa = function(action) {
   else if (action === 'fire-mode-auto')   { m._fireMode = 'auto';   renderPanel(); }
   else if (action === 'fire-mode-single') { m._fireMode = 'single'; renderPanel(); }
   else if (action === 'direct-fire') { cancelDraw(); enterDirectFireMode(m); }
+  else if (action === 'burst-fire-mode') {
+    if (combatMode === 'burst-fire' && combatActor === m) { exitCombatMode(); return; }
+    cancelDraw();
+    enterCombatMode('burst-fire', m, unitRangeM(m)/1000, '#ff8c00');
+    setStatus(`${(m._ammoType??'AP')==='AP'?'AP':'HE'} burst fire: hold LMB on target area — release to stop — Esc to cancel`);
+    closePanel();
+  }
   else if (action === 'merge-nearest') {
     const _mn = allMarkers.find(o => o !== m && o._side === m._side && o._role === m._role &&
       !movingMarkers.has(o) && !movingMarkers.has(m) && segMeters(markerPos(o), markerPos(m)) < 250);
@@ -5435,6 +5437,14 @@ setInterval(() => {
     }
   }
 
+  // ── Live reload countdown ──
+  { const _rTmr = document.getElementById('tank-reload-timer');
+    if (_rTmr && activePanel?._reloadingUntil) {
+      const _rem = Math.ceil((activePanel._reloadingUntil - now_m) / 1000);
+      if (_rem > 0) { _rTmr.textContent = _rem + 's'; }
+      else { _rTmr.textContent = '0s'; renderPanel(); } // auto-refresh when done
+    }
+  }
   // ── Bullet tracers ──
   const now_b = Date.now();
   for (let i = flyingBullets.length - 1; i >= 0; i--) {
@@ -5827,6 +5837,29 @@ map.on('dblclick', (e) => {
 });
 
 map.on('mousedown', (e) => {
+  if (combatMode === 'burst-fire' && combatActor) {
+    const _bfRangeM = segMeters(markerPos(combatActor), [e.latlng.lat, e.latlng.lng]);
+    if (_bfRangeM > unitRangeM(combatActor)) { showToast('Out of range!', '#ef5350'); return; }
+    window._burstFirePos = e.latlng;
+    map.dragging.disable();
+    function _doBurst() {
+      if (combatMode !== 'burst-fire' || !combatActor || combatActor._ammo <= 0) { window._vBurstStop(); return; }
+      const _fp = window._burstFirePos;
+      if (!_fp) return;
+      // Apply small scatter to burst position
+      const _bScM = Math.min(12, _bfRangeM / 100);
+      const _bAng = Math.random() * Math.PI * 2;
+      const _bR = Math.random() * _bScM;
+      const _bll = L.latLng(_fp.lat + _bR * Math.cos(_bAng) / 111320,
+        _fp.lng + _bR * Math.sin(_bAng) / (111320 * Math.cos(_fp.lat * Math.PI / 180)));
+      executeHEFire(combatActor, _bll);
+      if (activePanel === combatActor) renderPanel();
+    }
+    _doBurst();
+    _vBurstInterval = setInterval(_doBurst, VEHICLE_GUN[combatActor._role]?.burstFireMs ?? 300);
+    L.DomEvent.preventDefault(e.originalEvent);
+    return;
+  }
   if (!e.originalEvent.shiftKey) return;
   if (drawMode || rulerMode || annotateMode || patrolMode || convoyRouteMode ||
       _adminPlacing || _placingDeployPoint || _drawingDeployRoute || _settingFallback ||
@@ -5839,6 +5872,9 @@ map.on('mousedown', (e) => {
 });
 
 map.on('mousemove', (e) => {
+  if (combatMode === 'burst-fire' && window._burstFirePos !== undefined) {
+    window._burstFirePos = e.latlng; // track cursor for continuous fire position
+  }
   if (_selBoxStart) {
     const _dx = Math.abs(e.latlng.lat - _selBoxStart.lat) + Math.abs(e.latlng.lng - _selBoxStart.lng);
     if (_dx > 0.00005) _selBoxMoved = true;
@@ -5852,6 +5888,11 @@ map.on('mousemove', (e) => {
 });
 
 map.on('mouseup', (e) => {
+  if (combatMode === 'burst-fire') {
+    window._vBurstStop();
+    map.dragging.enable();
+    return;
+  }
   if (!_selBoxStart) return;
   map.dragging.enable();
   if (map.boxZoom) map.boxZoom.enable();
@@ -6170,7 +6211,7 @@ setInterval(() => {
     }
     // Mavic battery recharge (slow, ~1%/6s when idle)
     if (m._role === 'mavic' && !m._mavicMission && m._mavicBattery < 100) {
-      m._mavicBattery = Math.min(100, Math.round((m._mavicBattery + (20/6)) * 10) / 10); // ~30s full charge
+      m._mavicBattery = Math.min(100, Math.round((m._mavicBattery + 0.056) * 100) / 100); // ~30 min charge
     }
     // Continuous mavic recon
     if (m._role === 'mavic' && m._side === userSide && m._continuousRecon && !m._mavicMission && m._nextReconAt > 0 && now >= m._nextReconAt && m._mavicBattery >= 5 && m._mavicCooldownUntil <= now) {
@@ -7068,7 +7109,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-17-RESTORE7';
+const VERSION = '2026-09-17-RESTORE8';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7078,44 +7119,33 @@ const VERSION = '2026-09-17-RESTORE7';
     return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
   }
 console.log('Tactical Map v' + VERSION);
-// ── IFV/APC hold-to-fire burst ────────────────────────────────────
+// ── IFV/APC burst-fire state ─────────────────────────────────────
 let _vBurstInterval = null;
-window._vBurstStart = function(uid) {
-  const _bu = allMarkers.find(m => m._uid === uid);
-  if (!_bu) return;
-  function _doShot() {
-    if (!allMarkers.includes(_bu) || _bu._ammo <= 0) { window._vBurstStop(); return; }
-    if ((_bu._reloadingUntil ?? 0) > Date.now()) return;
-    const _be = allMarkers.filter(e => e._side !== _bu._side && (e._spottedUntil ?? 0) > Date.now()
-      && segMeters(markerPos(e), markerPos(_bu)) <= unitRangeM(_bu))
-      .sort((a,b) => segMeters(markerPos(a), markerPos(_bu)) - segMeters(markerPos(b), markerPos(_bu)));
-    if (!_be.length) return;
-    const _bp = markerPos(_be[0]);
-    const _gun = VEHICLE_GUN[_bu._role];
-    const _scM = Math.min(8, segMeters(markerPos(_bu), _bp) / 120);
-    const _ang = Math.random() * Math.PI * 2;
-    const _r = Math.random() * _scM;
-    const _fll = L.latLng(_bp[0] + _r * Math.cos(_ang) / 111320, _bp[1] + _r * Math.sin(_ang) / (111320 * Math.cos(_bp[0] * Math.PI / 180)));
-    executeHEFire(_bu, _fll);
-    if (activePanel === _bu) renderPanel();
-  }
-  _doShot();
-  _vBurstInterval = setInterval(_doShot, VEHICLE_GUN[_bu._role]?.burstFireMs ?? 300);
-};
+window._burstFirePos = null;
 window._vBurstStop = function() {
   if (_vBurstInterval) { clearInterval(_vBurstInterval); _vBurstInterval = null; }
+  window._burstFirePos = null;
 };
 
 function _refreshCasBox() {
-  if (!userSide) return;
   const box = document.getElementById('cas-box');
   if (!box) return;
+  const _sd = userSide;
+  if (!_sd && !_adminAuthed) return;
   box.style.display = 'block';
-  const _c = _casualties[userSide];
-  const ownEl = document.getElementById('cas-own');
-  const enEl  = document.getElementById('cas-enemy');
-  if (ownEl)  ownEl.textContent  = 'Own: ' + _c.own;
-  if (enEl)   enEl.textContent   = 'Enemy (BDA): ' + _c.enemyKnown;
+  if (_sd) {
+    const _c = _casualties[_sd];
+    const ownEl = document.getElementById('cas-own');
+    const enEl  = document.getElementById('cas-enemy');
+    if (ownEl) ownEl.textContent = 'Own: ' + _c.own;
+    if (enEl)  enEl.textContent  = 'Enemy (BDA): ' + _c.enemyKnown;
+  } else {
+    // Admin: show both sides
+    const ownEl = document.getElementById('cas-own');
+    const enEl  = document.getElementById('cas-enemy');
+    if (ownEl) ownEl.textContent = 'Blue: ' + _casualties.blue.own + ' · Red: ' + _casualties.red.own;
+    if (enEl)  enEl.textContent  = 'Blue BDA: ' + _casualties.blue.enemyKnown + ' · Red BDA: ' + _casualties.red.enemyKnown;
+  }
 }
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
