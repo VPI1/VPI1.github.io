@@ -1092,7 +1092,7 @@ const VEH_DISMOUNT_MS = 100;
 // installSec: game-time seconds to install (divide by TIME_SCALE for real seconds)
 const VEHICLE_GUN = {
   tank: {
-    dmgPerShot: 5, baseHit: 0.65, armorPen: 0.97, mangalPenalty: 0.55,
+    dmgPerShot: 5, baseHit: 0.85, armorPen: 0.97, mangalPenalty: 0.55,
     rangeM: 1500, burstRounds: 1, ammoPerBurst: 1, vehDmg: 2,
     coaxDmg: 1, coaxHit: 0.55, vsInfMult: 1.4,
     label: '125mm 2A46M',
@@ -1410,6 +1410,7 @@ setInterval(updateClock, 1000);
 // ── mavic patrol route ────────────────────────────────────────
 let patrolMode = false, patrolActor = null;
 let patrolPoints = [], patrolLine = null, patrolCostLabel = null;
+let mavicAorMode = false, mavicAorActor = null, mavicAorPoints = [], mavicAorLine = null;
 
 function patrolFlightCost(pts) {
   // total flight cost (home→wp1→wp2→...→home) in % battery
@@ -2118,6 +2119,9 @@ function executeHEFire(attacker, latlng) {
   const splashR = _isAP ? 5 : 35;
   const _gun = VEHICLE_GUN[attacker._role];
   const pt = [latlng.lat, latlng.lng];
+  { const _posA = markerPos(attacker); const _spd = _isAP ? 900 : 350;
+    const _hsm = L.marker(_posA, { icon: shellIcon(!_isAP), zIndexOffset: 400, interactive: false }).addTo(map);
+    flyingShells.push({ marker: _hsm, lat: _posA[0], lng: _posA[1], dstLat: pt[0], dstLng: pt[1], speed: _spd, unit: attacker, _isVehicle: true, _isHE: !_isAP }); }
   const now_he = Date.now();
   const zone = L.circle(latlng, {
     radius: splashR, color: _isAP ? '#90a4ae' : '#ff8c00', fill: true,
@@ -2760,12 +2764,15 @@ function _buildActTab(m, now, moving) {
         _pb('AP/APFSDS', '\u229E', _vAmmoAP ? 'atk on' : 'tac', "_pa('ammo-ap')") +
         _pb('HE', '\u229F', !_vAmmoAP ? 'atk on' : 'tac', "_pa('ammo-he')") +
         '</div>';
-      const _vFMauto = (m._fireMode ?? 'auto') === 'auto';
-      h += '<div style="display:flex;gap:4px;margin:0 0 4px">' +
-        _pb('Auto', '\u27f3', _vFMauto ? 'on' : 'tac', "_pa('fire-mode-auto')") +
-        _pb('Single shot', '\u229c', !_vFMauto ? 'on' : 'tac', "_pa('fire-mode-single')") +
-        '</div>';
+      if (m._role !== 'tank') {
+        const _vFMauto = (m._fireMode ?? 'auto') === 'auto';
+        h += '<div style="display:flex;gap:4px;margin:0 0 4px">' +
+          _pb('Auto', '\u27f3', _vFMauto ? 'on' : 'tac', "_pa('fire-mode-auto')") +
+          _pb('Single shot', '\u229c', !_vFMauto ? 'on' : 'tac', "_pa('fire-mode-single')") +
+          '</div>';
+      }
       h += `<div class="pb-note" style="color:#888;font-size:10px">${_vGun?.label} · ${unitRangeM(m)}m eff. range${(_vGun?.burstRounds ?? 1) > 1 ? ' · ' + _vGun.burstRounds + '-rd burst' : ''}${m._immobilized ? ' · immobilized (aim +10%)' : ''}</div>`;
+      if (m._role === 'tank' && (m._resupplyAt ?? 0) > now) h += `<div class="pb-note" style="color:#66bb6a;font-size:10px">Resupplying at TDP — next +1 rd in ${Math.ceil((m._resupplyAt - now) / 1000)}s</div>`;
       if (_vFight) {
         const _vDef = activeFights.get(m).defender;
         h += _pb(`Cease Fire (engaging ${ROLES[_vDef._role]?.label ?? 'enemy'})`, '⬛', 'atk on', "_pa('disengage')");
@@ -2873,23 +2880,17 @@ function _buildActTab(m, now, moving) {
       h += _pb(`Cooldown: ${Math.ceil((m._mavicCooldownUntil-now)/1000)}s`, '○', '', '', true);
     } else {
       const canFly = batPct > MAVIC_BATT_SAFETY * 2 || m._autoBatterySwap;
-      const hasAoR = !!m._mavicAoR;
-      const _camDirs = [null, 0, 45, 90, 135, 180, 225, 270, 315];
-      const _camLbls = ['▼ Down', '↑ N', '↗ NE', '→ E', '↘ SE', '↓ S', '↙ SW', '← W', '↖ NW'];
-      const _camIdx = _camDirs.indexOf(m._mavicCamHeading ?? null);
-      const _camLbl = _camLbls[_camIdx < 0 ? 0 : _camIdx];
-      h += _pb('Set Recon Zone', '⊕', 'tac', "_pa('mavic-aor-set')", false);
+      const hasAoR = !!(m._mavicAorPoly?.length >= 3);
+      h += _pb('Draw Recon Zone', '⬡', 'tac', "_pa('mavic-aor-set')", false);
       if (hasAoR) {
-        const _aorEff = Math.round(Math.min(200, Math.max(30, 60000 / m._mavicAoR.radiusM)));
-        h += _pb(`Zone: ${Math.round(m._mavicAoR.radiusM)}m radius · ${_aorEff}% detect`, '◎', 'tac', '', true);
-        h += _pb('Shrink Zone (−200m)', '−', '', "_pa('mavic-aor-shrink')");
-        h += _pb('Expand Zone (+200m)', '+', '', "_pa('mavic-aor-expand')");
+        const _aorA = polyAreaM2(m._mavicAorPoly);
+        const _aorEff = Math.round(Math.min(200, Math.max(15, 250000 / Math.max(1, _aorA) * 100)));
+        h += _pb(`Zone: ${(_aorA/1e6).toFixed(2)}km² · ${_aorEff}% detect`, '◎', 'tac', '', true);
         h += _pb(canFly ? 'Fly to Zone' : 'Fly to Zone (low battery)', '◉', canFly ? 'tac' : '', "_pa('mavic-fly-zone')", !canFly);
         h += _pb('Clear Zone', '✕', '', "_pa('mavic-aor-clear')");
       } else {
         h += _pb(canFly ? `Fly to Point · ${fmtDist(safeRangeM)} range` : 'Battery too low', '◉', canFly ? 'tac' : '', "_pa('scan')", !canFly);
       }
-      h += _pb(`Camera: ${_camLbl}`, '🎥', '', "_pa('mavic-cam-rotate')");
       h += _pb('Plan Patrol Route', '⤢', 'tac', "_pa('patrol')", !canFly);
       if (m._patrolRoute?.length >= 2) {
         const pc = Math.round(patrolFlightCost(m._patrolRoute));
@@ -3271,6 +3272,7 @@ function renderPanel() {
   else if (tab === 'dec') content = _buildDecTab(m);
   else if (tab === 'sts') content = _buildStatusTab(m);
   else content = _buildLogTab(m);
+  const _pSvScroll = panel.querySelector('.pc')?.scrollTop ?? 0;
 
   panel.innerHTML = `
     <div class="ph">
@@ -3289,6 +3291,7 @@ function renderPanel() {
     </div>
     <div class="pc">${content}</div>`;
   panel.style.display = 'flex';
+  { const _pNpc = panel.querySelector('.pc'); if (_pNpc && _pSvScroll) _pNpc.scrollTop = _pSvScroll; }
   showPanelRange(m);
   if ((m._role === 'fpv' || m._role === 'mavic') && !combatMode &&
       m._fpvReadyAt === 0 && (m._fpvCooldownUntil ?? 0) <= now) showFPVHorizon(m);
@@ -3419,33 +3422,17 @@ window._pa = function(action) {
     if (!m._continuousRecon) m._nextReconAt = 0;
     renderPanel();
   }
-  else if (action === 'mavic-aor-set')   { cancelDraw(); enterMavicAorSet(m); }
+  else if (action === 'mavic-aor-set')   { cancelDraw(); enterMavicAorDraw(m); }
   else if (action === 'mavic-aor-clear') {
-    m._mavicAoR = null;
-    if (m._mavicAorCircle) { map.removeLayer(m._mavicAorCircle); m._mavicAorCircle = null; }
-    renderPanel();
-  }
-  else if (action === 'mavic-aor-expand') {
-    if (m._mavicAoR) { m._mavicAoR.radiusM = Math.min(5000, m._mavicAoR.radiusM + 200); updateAorCircle(m); renderPanel(); }
-  }
-  else if (action === 'mavic-aor-shrink') {
-    if (m._mavicAoR) { m._mavicAoR.radiusM = Math.max(200, m._mavicAoR.radiusM - 200); updateAorCircle(m); renderPanel(); }
-  }
-  else if (action === 'mavic-cam-rotate') {
-    const _camDirs = [null, 0, 45, 90, 135, 180, 225, 270, 315];
-    const _ci = _camDirs.indexOf(m._mavicCamHeading ?? null);
-    m._mavicCamHeading = _camDirs[(_ci + 1) % _camDirs.length];
+    m._mavicAorPoly = null;
+    if (m._mavicAorLayer) { try { map.removeLayer(m._mavicAorLayer); } catch(e){} m._mavicAorLayer = null; }
     renderPanel();
   }
   else if (action === 'mavic-fly-zone') {
-    if (!m._mavicAoR) return;
+    if (!m._mavicAorPoly?.length) return;
     cancelDraw();
-    const _aR = m._mavicAoR.radiusM / 111000;
-    const _ag = Math.random() * 2 * Math.PI;
-    const _r = Math.sqrt(Math.random()) * _aR;
-    const _cosLat = Math.cos(m._mavicAoR.lat * Math.PI / 180);
-    const _pt = L.latLng(m._mavicAoR.lat + _r * Math.cos(_ag), m._mavicAoR.lng + _r * Math.sin(_ag) / Math.max(0.01, _cosLat));
-    launchMavicScan(m, _pt);
+    const _pt = randomPtInPoly(m._mavicAorPoly);
+    launchMavicScan(m, L.latLng(_pt[0], _pt[1]));
   }
   else if (action === 'toggle-auto-batt') {
     m._autoBatterySwap = !m._autoBatterySwap;
@@ -4867,20 +4854,72 @@ function mavicDroneIcon() {
   });
 }
 
-function updateAorCircle(m) {
-  if (!m._mavicAoR) return;
-  const _ctr = [m._mavicAoR.lat, m._mavicAoR.lng];
-  if (!m._mavicAorCircle) {
-    m._mavicAorCircle = L.circle(_ctr, { radius: m._mavicAoR.radiusM, color: '#00bcd4', fill: true, fillOpacity: 0.06, weight: 1.5, dashArray: '8 5', interactive: false }).addTo(map);
+function polyAreaM2(pts) {
+  if (!pts || pts.length < 3) return 1000;
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    a += pts[i][1] * pts[j][0] - pts[j][1] * pts[i][0];
+  }
+  const latRad = pts[0][0] * Math.PI / 180;
+  return Math.abs(a) / 2 * 111320 * 111320 * Math.cos(latRad);
+}
+function pointInPoly(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][1], yi = poly[i][0];
+    const xj = poly[j][1], yj = poly[j][0];
+    if (((yi > pt[0]) !== (yj > pt[0])) && (pt[1] < (xj - xi) * (pt[0] - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function randomPtInPoly(poly) {
+  const lats = poly.map(p => p[0]), lngs = poly.map(p => p[1]);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  for (let k = 0; k < 50; k++) {
+    const pt = [minLat + Math.random() * (maxLat - minLat), minLng + Math.random() * (maxLng - minLng)];
+    if (pointInPoly(pt, poly)) return pt;
+  }
+  return [(minLat + maxLat) / 2, (minLng + maxLng) / 2];
+}
+function enterMavicAorDraw(unit) {
+  mavicAorMode = true; mavicAorActor = unit;
+  mavicAorPoints = []; mavicAorLine = null;
+  exitCombatMode();
+  closePanel();
+  setStatus('AoR: click to add polygon vertices (3+) · Enter to confirm · Esc to cancel');
+}
+function mavicAorClick(latlng) {
+  mavicAorPoints.push([latlng.lat, latlng.lng]);
+  const _closedPts = mavicAorPoints.length >= 2 ? [...mavicAorPoints, mavicAorPoints[0]] : mavicAorPoints;
+  if (mavicAorLine) mavicAorLine.setLatLngs(_closedPts);
+  else mavicAorLine = L.polyline(_closedPts, { color: '#00bcd4', weight: 2, dashArray: '8 4', opacity: 0.85 }).addTo(map);
+  if (mavicAorPoints.length >= 3) {
+    const _area = polyAreaM2(mavicAorPoints);
+    const _eff = Math.round(Math.min(200, Math.max(15, 250000 / Math.max(1, _area) * 100)));
+    setStatus(`AoR: ${mavicAorPoints.length} pts · ${(_area/1e6).toFixed(2)}km² · ${_eff}% detect · Enter to confirm`);
   } else {
-    m._mavicAorCircle.setLatLng(_ctr);
-    m._mavicAorCircle.setRadius(m._mavicAoR.radiusM);
+    setStatus(`AoR: ${mavicAorPoints.length} pt${mavicAorPoints.length > 1 ? 's' : ''} · add more (need 3+)`);
   }
 }
-function enterMavicAorSet(unit) {
-  enterCombatMode('mavic-aor', unit, 5, '#00bcd4');
-  setStatus('Mavic: click map to place Recon Zone center (600m radius) — Esc to cancel');
-  closePanel();
+function confirmMavicAorDraw() {
+  const unit = mavicAorActor;
+  if (!unit || mavicAorPoints.length < 3) { cancelMavicAorDraw(); return; }
+  if (unit._mavicAorLayer) { try { map.removeLayer(unit._mavicAorLayer); } catch(e){} }
+  unit._mavicAorPoly = [...mavicAorPoints];
+  unit._mavicAorLayer = L.polygon(mavicAorPoints, { color: '#00bcd4', fill: true, fillOpacity: 0.07, weight: 1.5, dashArray: '8 5', interactive: false }).addTo(map);
+  const _area = polyAreaM2(mavicAorPoints);
+  const _eff = Math.round(Math.min(200, Math.max(15, 250000 / Math.max(1, _area) * 100)));
+  unitLog(unit, `Recon zone: ${(_area/1e6).toFixed(2)}km² · ${_eff}% detect`);
+  showToast(`Recon zone set — ${(_area/1e6).toFixed(2)}km² · ${_eff}% detect efficiency`, '#00bcd4');
+  cancelMavicAorDraw();
+  activePanel = unit; renderPanel();
+}
+function cancelMavicAorDraw() {
+  if (mavicAorLine) { try { map.removeLayer(mavicAorLine); } catch(e){} mavicAorLine = null; }
+  mavicAorMode = false; mavicAorActor = null; mavicAorPoints = [];
+  setStatus('');
 }
 function enterMavicScan(unit) {
   if (unit._mavicMission) return;
@@ -4935,14 +4974,10 @@ function launchMavicScan(unit, latlng) {
 
 // ── Mavic scan ────────────────────────────────────────────────
 function doReconScan(unit) {
-  // AoR-based repeat: fly to a random point inside the assigned recon zone
-  if (unit._mavicAoR) {
-    const _aR = unit._mavicAoR.radiusM / 111000;
-    const _ag = Math.random() * 2 * Math.PI;
-    const _r = Math.sqrt(Math.random()) * _aR;
-    const _cosLat = Math.cos(unit._mavicAoR.lat * Math.PI / 180);
-    const _pt = L.latLng(unit._mavicAoR.lat + _r * Math.cos(_ag), unit._mavicAoR.lng + _r * Math.sin(_ag) / Math.max(0.01, _cosLat));
-    launchMavicScan(unit, _pt);
+  // AoR-based repeat: fly to a random point inside the drawn recon polygon
+  if (unit._mavicAorPoly?.length >= 3) {
+    const _pt = randomPtInPoly(unit._mavicAorPoly);
+    launchMavicScan(unit, L.latLng(_pt[0], _pt[1]));
     return;
   }
   // If the unit has a saved patrol route, repeat the full patrol
@@ -5182,19 +5217,11 @@ setInterval(() => {
       // Probability per tick is derived from FOV position + terrain cover; spotted units stay flagged ~3s game time.
       const cPos = [mis.dstLat, mis.dstLng];
       const spotDur = 3000;
-      const _aorFactor = m._mavicAoR ? Math.min(2.0, Math.max(0.3, 600 / m._mavicAoR.radiusM)) : 1.0;
-      const _camH = m._mavicCamHeading ?? null;
+      const _aorFactor = m._mavicAorPoly?.length >= 3 ? Math.min(2.0, Math.max(0.15, 250000 / Math.max(1, polyAreaM2(m._mavicAorPoly)))) : 1.0;
       allMarkers.forEach(e => {
         if (e._side === m._side) return;
         const p = mavicSpotProb(cPos, markerPos(e));
-        const _ePos = markerPos(e);
-        const _camFactor = _camH !== null ? (() => {
-          const _dlat = _ePos[0] - cPos[0]; const _dlng = _ePos[1] - cPos[1];
-          const _bearing = (Math.atan2(_dlng, _dlat) * 180 / Math.PI + 360) % 360;
-          const _diff = Math.min(Math.abs(_bearing - _camH), 360 - Math.abs(_bearing - _camH));
-          return _diff < 45 ? 1.6 : _diff < 90 ? 1.0 : 0.5;
-        })() : 1.0;
-        if (p > 0 && Math.random() < p * 0.1 * _aorFactor * _camFactor) { // scale: p is per-second; tick is 0.1s
+        if (p > 0 && Math.random() < p * 0.1 * _aorFactor) { // scale: p is per-second; tick is 0.1s
           const wasSpotted = (e._spottedUntil ?? 0) > now_m;
           e._spottedUntil = Math.max(e._spottedUntil ?? 0, now_m + spotDur);
           // Alert artillery on first detection of each unit (not re-detections)
@@ -5603,6 +5630,7 @@ map.on('click', (e) => {
   if (rulerMode)      { rulerClick(e.latlng); return; }
   if (searchAreaMode) { searchAreaClick(e.latlng); return; }
   if (annotateMode)   { annotateClick(e.latlng); return; }
+  if (mavicAorMode)    { mavicAorClick(e.latlng); return; }
   if (patrolMode)      { patrolClick(e.latlng); return; }
   if (convoyRouteMode) { convoyRouteClick(e.latlng); return; }
   if (_placingDeployPoint) {
@@ -5648,17 +5676,6 @@ map.on('click', (e) => {
       return;
     }
     startArtilleryPrep(combatActor, e.latlng); exitCombatMode(); return;
-  }
-  if (combatMode === 'mavic-aor') {
-    const _mu = combatActor;
-    if (_mu._mavicAorCircle) map.removeLayer(_mu._mavicAorCircle);
-    _mu._mavicAoR = { lat: e.latlng.lat, lng: e.latlng.lng, radiusM: 600 };
-    _mu._mavicAorCircle = L.circle(e.latlng, { radius: 600, color: '#00bcd4', fill: true, fillOpacity: 0.06, weight: 1.5, dashArray: '8 5', interactive: false }).addTo(map);
-    unitLog(_mu, 'Recon zone set · 600m radius');
-    showToast('Recon zone set (600m) — use Shrink/Expand then Fly to Zone', '#00bcd4');
-    exitCombatMode();
-    if (activePanel === _mu) renderPanel();
-    return;
   }
   if (combatMode === 'mavic-scan')    { launchMavicScan(combatActor, e.latlng);    exitCombatMode(); return; }
   if (combatMode === 'grenade')       { executeGrenade(combatActor, e.latlng);      exitCombatMode(); return; }
@@ -5774,6 +5791,7 @@ document.addEventListener('keydown', (e) => {
     if (selectedMarkers.size) { selectedMarkers.forEach(sm => sm.getElement()?.style.removeProperty('outline')); selectedMarkers.clear(); return; }
     clearTimeout(clickTimer); clickTimer = null;
     if (convoyRouteMode) { cancelConvoyRoute(); return; }
+    if (mavicAorMode) { cancelMavicAorDraw(); return; }
     if (patrolMode) { cancelPatrol(); return; }
     if (_placingDeployPoint) { _placingDeployPoint = false; document.getElementById('dep-btn').classList.remove('ruler-on'); setStatus(''); return; }
     if (_drawingDeployRoute) { const {previewLine} = _drawingDeployRoute; map.removeLayer(previewLine); _drawingDeployRoute = null; setStatus(''); return; }
@@ -5798,6 +5816,7 @@ document.addEventListener('keydown', (e) => {
     if (convoyRouteMode && convoyRoutePoints.length > 2) { finishConvoyRoute(); return; }
     if (patrolMode && patrolPoints.length >= 2) { confirmPatrol(); return; }
     if (_drawingDeployRoute && _drawingDeployRoute.points.length >= 1) { finishDeployRoute(); return; }
+    if (mavicAorMode && mavicAorPoints.length >= 3) { confirmMavicAorDraw(); return; }
     if (searchAreaMode && searchAreaPoints.length >= 3) { finishSearchArea(); return; }
     if (drawMode && drawPoints.length >= 2) {
       clearTimeout(clickTimer); clickTimer = null;
@@ -5938,6 +5957,25 @@ setInterval(() => {
     tdpSpawn(dp, now);
     dp._nextSpawnAt = now + dp._spawnIntervalMs;
     saveState();
+  }
+
+  // ── tank resupply at TDP (idle tank within 80m of matching TDP) ──
+  for (const _rDp of deploymentPoints) {
+    if (_rDp.role !== 'tank') continue;
+    const _rDpPos = [_rDp.marker.getLatLng().lat, _rDp.marker.getLatLng().lng];
+    for (const _tm of allMarkers) {
+      if (_tm._role !== 'tank' || _tm._side !== _rDp.side) continue;
+      if (movingMarkers.has(_tm)) continue;
+      if ((_tm._ammo ?? 0) >= (_tm._maxAmmo ?? 30)) continue;
+      if (segMeters(markerPos(_tm), _rDpPos) > 80) continue;
+      if ((_tm._resupplyAt ?? 0) > now) continue;
+      _tm._ammo = Math.min(_tm._maxAmmo ?? 30, (_tm._ammo ?? 0) + 1);
+      _tm._resupplyAt = now + 30000;
+      unitLog(_tm, `TDP resupply: ${_tm._ammo}/${_tm._maxAmmo} rds`);
+      if (activePanel === _tm) renderPanel();
+      if (_tm._side === userSide) showToast(`Tank resupplied at TDP — ${_tm._ammo}/${_tm._maxAmmo} rds`, '#66bb6a');
+      fbSyncAnyUnit(_tm);
+    }
   }
 
   // ── per-marker timers + fog of war ──
@@ -6926,7 +6964,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-17-RESTORE4';
+const VERSION = '2026-09-17-RESTORE5';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
