@@ -1168,7 +1168,7 @@ function soldierIcon(side, count, role = '', mangalHp = null) {
 
 // ── globals ───────────────────────────────────────────────────
 let TIME_SCALE = 1;   // real-time: 1 game second = 1 real second
-Object.defineProperty(window, 'WALK_MS', { get: () => 22.22, configurable: true }); // fixed: ~2.3 m/s real
+Object.defineProperty(window, 'WALK_MS', { get: () => 1.111, configurable: true }); // 1.111 m/s = 4 km/h infantry; vehicles scale via _ROLE_SPD/_UNIT_SPD_MULT
 
 // ── terrain polygons (populated after OSM load) ───────────────
 let terrainPolys = []; // [{ ring, urban }]  urban=true→village/buildings, false→forest
@@ -1321,7 +1321,7 @@ const SUPPLY_DEPOT_BLUE = [48.005, 36.282]; // ~25 km north of contact line
 const SUPPLY_DEPOT_RED  = [47.555, 36.282]; // ~25 km south of contact line
 // Convoy speed: 40 km/h (realistic truck on roads) scaled to game time
 // Real transit time = distance_km * SUPPLY_MS_PER_KM milliseconds
-const SUPPLY_MS_PER_KM  = 5400; // ~5.4 s/km real time (40 km/h at TIME_SCALE=20)
+const SUPPLY_MS_PER_KM  = 108000; // 108 s/km = ~33 km/h supply convoy (real-time, TIME_SCALE=1)
 const FPV_MAX_DRONES    = 6;
 const SUPPLY_TYPES = {
   ammo:    { label: 'Ammo Resupply',    icon: '◈', roles: ['infantry','mortar','artillery'], desc: 'Truck delivers full ammo load' },
@@ -7111,7 +7111,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-17-RESTORE9';
+const VERSION = '2026-09-17-RESTORE10';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
