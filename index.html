@@ -311,6 +311,19 @@ function loadFirebaseSDK(cb) {
 </script>
 </head>
 <body>
+<style>
+#cas-box{position:fixed;top:10px;right:10px;z-index:2000;background:rgba(20,20,30,0.88);
+  border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:6px 10px;font:12px/1.5 monospace;
+  color:#e0e0e0;min-width:160px;pointer-events:none;display:none}
+#cas-box .cas-title{font-size:10px;color:#90a4ae;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+#cas-box .cas-own{color:#ef5350}
+#cas-box .cas-enemy{color:#ffb74d}
+</style>
+<div id="cas-box">
+  <div class="cas-title">Casualties</div>
+  <div class="cas-own"  id="cas-own">Own: —</div>
+  <div class="cas-enemy" id="cas-enemy">Enemy (BDA): —</div>
+</div>
 
 <div id="login">
   <div id="login-box">
@@ -1154,8 +1167,8 @@ function soldierIcon(side, count, role = '', mangalHp = null) {
 }
 
 // ── globals ───────────────────────────────────────────────────
-let TIME_SCALE = 20;  // controlled by admin speed slider (default 1x real-time)
-Object.defineProperty(window, 'WALK_MS', { get: () => 1.111 * TIME_SCALE, configurable: true });
+let TIME_SCALE = 1;   // real-time: 1 game second = 1 real second
+Object.defineProperty(window, 'WALK_MS', { get: () => 22.22, configurable: true }); // fixed: ~2.3 m/s real
 
 // ── terrain polygons (populated after OSM load) ───────────────
 let terrainPolys = []; // [{ ring, urban }]  urban=true→village/buildings, false→forest
@@ -1270,7 +1283,7 @@ function mavicSpotProb(scanCentrePos, targetPos) {
   // 30x zoom: operator can zoom any target in the footprint into full frame →
   // flat falloff; edge detection still meaningful.
   // centre (nd=0): ~0.92  mid (nd=0.5): ~0.78  edge (nd=1): ~0.52
-  const basePct = 0.85 * Math.exp(-0.55 * nd * nd) + 0.10 * (1 - nd * 0.5);
+  const basePct = 0.93 * Math.exp(-0.55 * nd * nd) + 0.07 * (1 - nd * 0.5);
   // Terrain + fortification cover — dense canopy and dug-in positions hide targets
   const terrain = terrainAt(targetPos);
   const terrainCover = terrain === 'forest' ? 0.22 : terrain === 'urban' ? 0.48 : 1.00;
@@ -2111,6 +2124,13 @@ function enterHEGroundFire(unit) {
   closePanel();
 }
 
+function enterDirectFireMode(unit) {
+  if (unit._ammo <= 0) { showToast('No ammo.', '#888'); return; }
+  enterCombatMode('direct-fire', unit, unitRangeM(unit) / 1000, '#ff8c00');
+  setStatus(`Direct fire: click on/near an enemy unit within ${unitRangeM(unit)}m — Esc to cancel`);
+  closePanel();
+}
+
 function executeHEFire(attacker, latlng) {
   exitCombatMode();
   if (!allMarkers.includes(attacker) || attacker._ammo <= 0) return;
@@ -2323,6 +2343,17 @@ function removeUnit(marker) {
 }
 function damageUnit(marker, casualties) {
   if (casualties <= 0) return false;
+  // Track casualties: own side always, enemy known only if spotted
+  { const _dmgSd = marker._side, _oppSd = _dmgSd === 'blue' ? 'red' : 'blue';
+    const _actualC = Math.min(casualties, marker._soldiers?.length
+      ? marker._soldiers.filter(s=>s.alive!==false).length : marker._count);
+    if (_actualC > 0) {
+      const _wasSeen = (marker._spottedUntil ?? 0) > Date.now();
+      _casualties[_dmgSd].own += _actualC;
+      if (_wasSeen) _casualties[_oppSd].enemyKnown += _actualC;
+      _refreshCasBox();
+    }
+  }
   if (marker._soldiers?.length) {
     // Kill individual soldiers randomly
     let alive = aliveSoldiers(marker);
@@ -2612,7 +2643,7 @@ function _buildActTab(m, now, moving) {
     const supRangeKm = (unitRangeM(m)/1000).toFixed(2) + ' km';
     const supEn = findEnemiesInRange(m, unitRangeM(m)/1000).filter(e => e._spottedUntil > now);
     h += _pb(`Suppress · ${supRangeKm}${supEn.length?` · ${supEn.length} visible`:' · none visible'}`, '⊘', 'sup', "_pa('suppress')", !(m._ammo>0&&supEn.length));
-    h += _pb('Area Suppress · click ground', '⊛', 'sup', "_pa('area-suppress')", m._ammo<=0);
+
     // Trench clearing — shows when within 20m of a fortified enemy
     const clearTargets = findEnemiesInRange(m, 0.020).filter(e => (e._fortLevel ?? 0) > 0);
     if (clearTargets.length) {
@@ -2783,8 +2814,7 @@ function _buildActTab(m, now, moving) {
         const [_vAtk] = _vIncoming;
         h += _pb(`Cease Fire (defending vs ${ROLES[_vAtk._role]?.label ?? 'enemy'})`, '⬛', 'atk on', "_pa('disengage-def')");
       }
-      h += _pb('Area Suppress · click ground', '⊛', 'sup', "_pa('area-suppress')", m._ammo<=0);
-      h += _pb(`${_vAmmoAP ? 'AP' : 'HE'} Ground Fire · click map`, _vAmmoAP ? '⊞' : '⊟', 'atk', "_pa('he-ground')", m._ammo<=0);
+      h += _pb(`${_vAmmoAP ? 'AP' : 'HE'} Direct Fire · click enemy`, _vAmmoAP ? '⊞' : '⊟', 'atk', "_pa('direct-fire')", m._ammo<=0);
       const _vHold = m._conds?.holdPos;
       h += _pb(_vHold ? 'Release Hold Position' : 'Hold Position', '⬙', _vHold?'on':'tac', "_pa('hold-toggle')");
     }
@@ -2817,7 +2847,6 @@ function _buildActTab(m, now, moving) {
       h += _pb(`Cease Fire (defending vs ${ROLES[_gcAtk._role]?.label??'enemy'})`, '⬛', 'atk on', "_pa('disengage-def')");
     }
     h += _pb(`Suppress · 0.80 km${_gcEn.length?` · ${_gcEn.length} visible`:' · none visible'}`, '⊘', 'sup', "_pa('suppress')", !(m._ammo>0&&_gcEn.length));
-    h += _pb('Area Suppress · click ground', '⊛', 'sup', "_pa('area-suppress')", m._ammo<=0);
     const _holdOn = m._conds?.holdPos;
     h += _pb(_holdOn ? 'Release Hold' : 'Hold Position', '⬙', _holdOn?'on':'tac', "_pa('hold-toggle')");
   }
@@ -3336,14 +3365,13 @@ window._pa = function(action) {
     clearRoute(m); closePanel();
   } else if (action === 'attack')    { cancelDraw(); doInfantryAttack(m); }
   else if (action === 'suppress')      { cancelDraw(); enterSuppressMode(m); }
-  else if (action === 'area-suppress') { cancelDraw(); enterAreaSuppressMode(m); }
   else if (action === 'grenade')     { cancelDraw(); doGrenade(m); }
   else if (action === 'move-sel')    { cancelDraw(); moveSoldierSubset(m); }
   else if (action === 'ammo-ap') { m._ammoType = 'AP'; renderPanel(); }
   else if (action === 'ammo-he') { m._ammoType = 'HE'; renderPanel(); }
   else if (action === 'fire-mode-auto')   { m._fireMode = 'auto';   renderPanel(); }
   else if (action === 'fire-mode-single') { m._fireMode = 'single'; renderPanel(); }
-  else if (action === 'he-ground') { cancelDraw(); enterHEGroundFire(m); }
+  else if (action === 'direct-fire') { cancelDraw(); enterDirectFireMode(m); }
   else if (action === 'disengage') {
     // Attacker voluntarily stops the fight
     endFight(m);
@@ -3826,7 +3854,7 @@ function startFight(attacker, defender) {
   const _isSurprise = (attacker._spottedUntil ?? 0) <= now_sf;
   // Longer reaction delay if surprised — defender must locate threat, process, return fire
   const _surpriseReactionBonus = _isSurprise ? Math.max(3000, distM * 8) : 0;
-  const reactionMs = (1000 + (distM / unitRangeM(defender)) * 2000) + _surpriseReactionBonus / TIME_SCALE;
+  const reactionMs = (1000 + (distM / unitRangeM(defender)) * 2000) + _surpriseReactionBonus / 20;
   // When fire starts the defender instantly locates the attacker from muzzle flash + sound signature.
   // Even units in deep trenches / buildings know WHERE fire is coming from — smoke, report, concussion.
   // This reveals the attacker to the defender so they can return fire.
@@ -4836,7 +4864,7 @@ function applyFPVImpact(pilot, target, intercepted) {
 
 // ── Mavic drone ───────────────────────────────────────────────
 const flyingMavics = [];
-Object.defineProperty(window, 'MAVIC_SPD', { get: () => 13.9 * TIME_SCALE, configurable: true });
+Object.defineProperty(window, 'MAVIC_SPD', { get: () => 13.9, configurable: true }); // real: 50 km/h
 // MAVIC_SCAN_SEC removed — hover time is now battery-derived per mission
 
 function mavicDroneIcon() {
@@ -5220,8 +5248,18 @@ setInterval(() => {
       const _aorFactor = m._mavicAorPoly?.length >= 3 ? Math.min(2.0, Math.max(0.15, 250000 / Math.max(1, polyAreaM2(m._mavicAorPoly)))) : 1.0;
       allMarkers.forEach(e => {
         if (e._side === m._side) return;
-        const p = mavicSpotProb(cPos, markerPos(e));
-        if (p > 0 && Math.random() < p * 0.1 * _aorFactor) { // scale: p is per-second; tick is 0.1s
+        const ePos = markerPos(e);
+        let p;
+        if (m._mavicAorPoly?.length >= 3 && pointInPoly(ePos, m._mavicAorPoly)) {
+          // Target inside drawn AoR polygon: detect based on terrain/cover, scaled by zone area
+          const _terrain = terrainAt(ePos);
+          const _tCover = _terrain === 'forest' ? 0.28 : _terrain === 'urban' ? 0.50 : 1.00;
+          const _fCover = 1 - (FORT_COVER.detection[e._fortLevel ?? 0] ?? 0);
+          p = 0.92 * _tCover * _fCover * weatherFactor * _aorFactor;
+        } else {
+          p = mavicSpotProb(cPos, ePos) * _aorFactor;
+        }
+        if (p > 0 && Math.random() < p * 0.1) { // scale: p is per-second; tick is 0.1s
           const wasSpotted = (e._spottedUntil ?? 0) > now_m;
           e._spottedUntil = Math.max(e._spottedUntil ?? 0, now_m + spotDur);
           // Alert artillery on first detection of each unit (not re-detections)
@@ -5680,7 +5718,26 @@ map.on('click', (e) => {
   if (combatMode === 'mavic-scan')    { launchMavicScan(combatActor, e.latlng);    exitCombatMode(); return; }
   if (combatMode === 'grenade')       { executeGrenade(combatActor, e.latlng);      exitCombatMode(); return; }
   if (combatMode === 'area-suppress') { executeAreaSuppress(combatActor, e.latlng); return; }
-  if (combatMode === 'he-ground') { executeHEFire(combatActor, e.latlng); return; }
+  if (combatMode === 'direct-fire') {
+    // Find nearest spotted enemy — fire at them with scatter; else fire at click position
+    const _dfClick = [e.latlng.lat, e.latlng.lng];
+    const _dfEnemies = allMarkers
+      .filter(en => en._side !== combatActor._side && (en._spottedUntil ?? 0) > Date.now())
+      .sort((a,b) => segMeters(markerPos(a), _dfClick) - segMeters(markerPos(b), _dfClick));
+    let _fireLatLng = e.latlng;
+    if (_dfEnemies.length > 0 && segMeters(markerPos(_dfEnemies[0]), _dfClick) < 150) {
+      const _tPos = markerPos(_dfEnemies[0]);
+      const _rangeM = segMeters(markerPos(combatActor), _tPos);
+      const _scatterM = Math.min(20, _rangeM / 80);
+      const _ang = Math.random() * Math.PI * 2;
+      const _r = Math.random() * _scatterM;
+      _fireLatLng = L.latLng(
+        _tPos[0] + _r * Math.cos(_ang) / 111320,
+        _tPos[1] + _r * Math.sin(_ang) / (111320 * Math.cos(_tPos[0] * Math.PI / 180))
+      );
+    }
+    executeHEFire(combatActor, _fireLatLng); return;
+  }
   if (!drawMode) {
     // Guard: if click originated from a marker (within last 200ms), don't steal focus
     if (Date.now() - _markerClickAt < 200) return;
@@ -6067,7 +6124,7 @@ setInterval(() => {
     }
     // Mavic battery recharge (slow, ~1%/6s when idle)
     if (m._role === 'mavic' && !m._mavicMission && m._mavicBattery < 100) {
-      m._mavicBattery = Math.min(100, Math.round((m._mavicBattery + (TIME_SCALE/6)) * 10) / 10);
+      m._mavicBattery = Math.min(100, Math.round((m._mavicBattery + (20/6)) * 10) / 10); // ~30s full charge
     }
     // Continuous mavic recon
     if (m._role === 'mavic' && m._side === userSide && m._continuousRecon && !m._mavicMission && m._nextReconAt > 0 && now >= m._nextReconAt && m._mavicBattery >= 5 && m._mavicCooldownUntil <= now) {
@@ -6480,7 +6537,8 @@ const _fbClientId = (() => {
 })();
 let _fbDb = null;
 let _fbSnapshotReady = false; // becomes true once our side's snapshot has arrived
-const _killedUidCache = new Set(); // uids of destroyed units — prevents re-creation from stale Firebase echoes
+const _killedUidCache = new Set();
+let _casualties = { blue:{own:0,enemyKnown:0}, red:{own:0,enemyKnown:0} }; // uids of destroyed units — prevents re-creation from stale Firebase echoes
 const _fbInitSnapshotDone = {}; // tracks per-side first-snapshot orphan cleanup
 
 function getFBConfig() { try { return JSON.parse(localStorage.getItem(FB_KEY)) || FB_DEFAULT_CFG; } catch { return FB_DEFAULT_CFG; } }
@@ -6964,7 +7022,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-17-RESTORE5';
+const VERSION = '2026-09-17-RESTORE6';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -6974,6 +7032,17 @@ const VERSION = '2026-09-17-RESTORE5';
     return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
   }
 console.log('Tactical Map v' + VERSION);
+function _refreshCasBox() {
+  if (!userSide) return;
+  const box = document.getElementById('cas-box');
+  if (!box) return;
+  box.style.display = 'block';
+  const _c = _casualties[userSide];
+  const ownEl = document.getElementById('cas-own');
+  const enEl  = document.getElementById('cas-enemy');
+  if (ownEl)  ownEl.textContent  = 'Own: ' + _c.own;
+  if (enEl)   enEl.textContent   = 'Enemy (BDA): ' + _c.enemyKnown;
+}
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('version-badge');
   if (el) el.textContent = 'v' + VERSION;
@@ -7072,11 +7141,12 @@ function tdpSpawn(dp, now) {
   if (!pointInBoundary(dpPos[0], dpPos[1])) return;
   const spawnCount = TDP_SPAWN_COUNT[dp.role] ?? 1;
 
-  // Look for an idle unit of same side+role sitting at the TDP (within 80m, not yet moving on a route)
+  // Look for an idle unit of same side+role within 300m of the TDP (not moving)
   const atTDP = allMarkers.find(m =>
     m._side === dp.side && m._role === dp.role &&
     !movingMarkers.has(m) &&
-    segMeters(markerPos(m), dpPos) <= 80
+    (!m._splitAt || Date.now() - m._splitAt > 30000) &&
+    segMeters(markerPos(m), dpPos) <= 300
   );
 
   if (atTDP) {
