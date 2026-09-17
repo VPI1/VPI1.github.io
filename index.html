@@ -312,7 +312,7 @@ function loadFirebaseSDK(cb) {
 </head>
 <body>
 <style>
-#cas-box{position:fixed;top:10px;right:10px;z-index:2000;background:rgba(20,20,30,0.88);
+#cas-box{position:fixed;bottom:65px;right:10px;z-index:2000;background:rgba(20,20,30,0.88);
   border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:6px 10px;font:12px/1.5 monospace;
   color:#e0e0e0;min-width:160px;pointer-events:none;display:none}
 #cas-box .cas-title{font-size:10px;color:#90a4ae;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
@@ -1108,19 +1108,19 @@ const VEHICLE_GUN = {
     dmgPerShot: 5, baseHit: 0.85, armorPen: 0.97, mangalPenalty: 0.55,
     rangeM: 1500, burstRounds: 1, ammoPerBurst: 1, vehDmg: 2,
     coaxDmg: 1, coaxHit: 0.55, vsInfMult: 1.4,
-    label: '125mm 2A46M',
+    label: '125mm 2A46M', reloadMs: 8000, splashHE: 35, splashAP: 5,
   },
   ifv: {
-    dmgPerShot: 2, baseHit: 0.55, armorPen: 0.50, mangalPenalty: 1.00,
-    rangeM: 1000, burstRounds: 4, ammoPerBurst: 4, vehDmg: 1,
-    coaxDmg: 1, coaxHit: 0.40, vsInfMult: 1.6,
-    label: '30mm 2A42',
+    dmgPerShot: 1, baseHit: 0.55, armorPen: 0.50, mangalPenalty: 1.00,
+    rangeM: 1000, burstRounds: 1, ammoPerBurst: 1, vehDmg: 1,
+    coaxDmg: 0, coaxHit: 0, vsInfMult: 1.2,
+    label: '30mm 2A42', reloadMs: 250, burstFireMs: 250, splashHE: 7, splashAP: 3,
   },
   apc: {
-    dmgPerShot: 1, baseHit: 0.60, armorPen: 0.30, mangalPenalty: 1.00,
-    rangeM: 800, burstRounds: 3, ammoPerBurst: 3, vehDmg: 1,
-    coaxDmg: 0, coaxHit: 0, vsInfMult: 1.3,
-    label: '30mm 2A72/14.5mm KPV',
+    dmgPerShot: 1, baseHit: 0.55, armorPen: 0.25, mangalPenalty: 1.00,
+    rangeM: 800, burstRounds: 1, ammoPerBurst: 1, vehDmg: 0,
+    coaxDmg: 0, coaxHit: 0, vsInfMult: 1.1,
+    label: '30mm 2A72/14.5mm KPV', reloadMs: 300, burstFireMs: 300, splashHE: 6, splashAP: 2,
   },
 };
 const MANGAL_STATS = {
@@ -2134,10 +2134,16 @@ function enterDirectFireMode(unit) {
 function executeHEFire(attacker, latlng) {
   exitCombatMode();
   if (!allMarkers.includes(attacker) || attacker._ammo <= 0) return;
-  attacker._ammo = Math.max(0, attacker._ammo - 1);
-  const _isAP = (attacker._ammoType ?? 'AP') === 'AP';
-  const splashR = _isAP ? 5 : 35;
   const _gun = VEHICLE_GUN[attacker._role];
+  // Reload check (tank: 8s; IFV/APC: handled by burst interval)
+  if ((attacker._reloadingUntil ?? 0) > Date.now()) {
+    showToast(`Still reloading — ${Math.ceil((attacker._reloadingUntil - Date.now()) / 1000)}s`, '#ffd54f');
+    return;
+  }
+  attacker._ammo = Math.max(0, attacker._ammo - 1);
+  if (_gun?.reloadMs) attacker._reloadingUntil = Date.now() + _gun.reloadMs;
+  const _isAP = (attacker._ammoType ?? 'AP') === 'AP';
+  const splashR = _isAP ? (_gun?.splashAP ?? 5) : (_gun?.splashHE ?? 35);
   const pt = [latlng.lat, latlng.lng];
   { const _posA = markerPos(attacker); const _spd = _isAP ? 900 : 350;
     const _hsm = L.marker(_posA, { icon: shellIcon(!_isAP), zIndexOffset: 400, interactive: false }).addTo(map);
@@ -2643,6 +2649,8 @@ function _buildActTab(m, now, moving) {
     const supRangeKm = (unitRangeM(m)/1000).toFixed(2) + ' km';
     const supEn = findEnemiesInRange(m, unitRangeM(m)/1000).filter(e => e._spottedUntil > now);
     h += _pb(`Suppress · ${supRangeKm}${supEn.length?` · ${supEn.length} visible`:' · none visible'}`, '⊘', 'sup', "_pa('suppress')", !(m._ammo>0&&supEn.length));
+    { const _mnear = allMarkers.find(o => o !== m && o._side === m._side && o._role === m._role && !movingMarkers.has(o) && !movingMarkers.has(m) && segMeters(markerPos(o), markerPos(m)) < 100);
+      if (_mnear) h += _pb(`Merge with nearby unit (${_mnear._count})`, '⊞', 'tac', "_pa('merge-nearest')"); }
 
     // Trench clearing — shows when within 20m of a fortified enemy
     const clearTargets = findEnemiesInRange(m, 0.020).filter(e => (e._fortLevel ?? 0) > 0);
@@ -2787,6 +2795,7 @@ function _buildActTab(m, now, moving) {
       const _vFight = activeFights.has(m);
       const _vIncoming = [...activeFights.entries()].find(([,f]) => f.defender === m);
       const _vGun = VEHICLE_GUN[m._role];
+      const _vReloading = m._reloadingUntil ?? 0;
       const _vRangeKm = (unitRangeM(m) / 1000).toFixed(2);
       const _vEn = findEnemiesInRange(m, unitRangeM(m)/1000).filter(e => e._spottedUntil > now);
       h += `<div class="psec">⊕ Direct Fire</div>`;
@@ -2795,14 +2804,15 @@ function _buildActTab(m, now, moving) {
         _pb('AP/APFSDS', '\u229E', _vAmmoAP ? 'atk on' : 'tac', "_pa('ammo-ap')") +
         _pb('HE', '\u229F', !_vAmmoAP ? 'atk on' : 'tac', "_pa('ammo-he')") +
         '</div>';
-      if (m._role !== 'tank') {
+      if (m._role === 'tank') {
+        // Tank keeps auto/single mode buttons
         const _vFMauto = (m._fireMode ?? 'auto') === 'auto';
         h += '<div style="display:flex;gap:4px;margin:0 0 4px">' +
           _pb('Auto', '\u27f3', _vFMauto ? 'on' : 'tac', "_pa('fire-mode-auto')") +
           _pb('Single shot', '\u229c', !_vFMauto ? 'on' : 'tac', "_pa('fire-mode-single')") +
           '</div>';
       }
-      h += `<div class="pb-note" style="color:#888;font-size:10px">${_vGun?.label} · ${unitRangeM(m)}m eff. range${(_vGun?.burstRounds ?? 1) > 1 ? ' · ' + _vGun.burstRounds + '-rd burst' : ''}${m._immobilized ? ' · immobilized (aim +10%)' : ''}</div>`;
+      h += `<div class="pb-note" style="color:#888;font-size:10px">${_vGun?.label} · ${unitRangeM(m)}m range${m._role==='tank'?' · '+((_vGun?.reloadMs??0)/1000).toFixed(0)+'s reload':m._role==='ifv'?' · rapid burst':' · rapid burst'}${m._immobilized ? ' · immobilized' : ''}</div>`;
       if (m._role === 'tank' && (m._resupplyAt ?? 0) > now) h += `<div class="pb-note" style="color:#66bb6a;font-size:10px">Resupplying at TDP — next +1 rd in ${Math.ceil((m._resupplyAt - now) / 1000)}s</div>`;
       if (_vFight) {
         const _vDef = activeFights.get(m).defender;
@@ -2814,9 +2824,18 @@ function _buildActTab(m, now, moving) {
         const [_vAtk] = _vIncoming;
         h += _pb(`Cease Fire (defending vs ${ROLES[_vAtk._role]?.label ?? 'enemy'})`, '⬛', 'atk on', "_pa('disengage-def')");
       }
-      h += _pb(`${_vAmmoAP ? 'AP' : 'HE'} Direct Fire · click enemy`, _vAmmoAP ? '⊞' : '⊟', 'atk', "_pa('direct-fire')", m._ammo<=0);
+      if (m._role === 'tank') {
+        h += _pb(`${_vAmmoAP ? 'AP' : 'HE'} Direct Fire · click enemy`, _vAmmoAP ? '⊞' : '⊟', 'atk', "_pa('direct-fire')", m._ammo<=0 || (_vReloading??0) > now);
+        if (_vReloading > now) h += `<div class="pb-note" style="color:#ffd54f;font-size:10px">Reloading — ${Math.ceil((_vReloading-now)/1000)}s</div>`;
+      } else {
+        // IFV/APC: hold-to-fire burst button
+        const _bfDis = m._ammo<=0 || !_vEn.length ? ' disabled' : '';
+        h += `<button class="pb atk"${_bfDis} onmousedown="window._vBurstStart('${m._uid}')" onmouseup="window._vBurstStop()" onmouseleave="window._vBurstStop()"><span class="pb-ic">⊞</span><span>${_vAmmoAP?'AP':'HE'} Hold to Fire${_vEn.length?' · '+_vEn.length+' target'+(1<_vEn.length?'s':''):' · none spotted'}</span></button>`;
+      }
       const _vHold = m._conds?.holdPos;
       h += _pb(_vHold ? 'Release Hold Position' : 'Hold Position', '⬙', _vHold?'on':'tac', "_pa('hold-toggle')");
+      { const _vmear = allMarkers.find(o => o !== m && o._side === m._side && o._role === m._role && !movingMarkers.has(o) && !movingMarkers.has(m) && segMeters(markerPos(o), markerPos(m)) < 200);
+        if (_vmear) h += _pb(`Merge with nearby ${ROLES[m._role]?.label??m._role} (${_vmear._count} crew)`, '⊞', 'tac', "_pa('merge-nearest')"); }
     }
   }
   if (m._role === 'fpv') {
@@ -3372,6 +3391,21 @@ window._pa = function(action) {
   else if (action === 'fire-mode-auto')   { m._fireMode = 'auto';   renderPanel(); }
   else if (action === 'fire-mode-single') { m._fireMode = 'single'; renderPanel(); }
   else if (action === 'direct-fire') { cancelDraw(); enterDirectFireMode(m); }
+  else if (action === 'merge-nearest') {
+    const _mn = allMarkers.find(o => o !== m && o._side === m._side && o._role === m._role &&
+      !movingMarkers.has(o) && !movingMarkers.has(m) && segMeters(markerPos(o), markerPos(m)) < 250);
+    if (_mn) {
+      _mn._count += m._count;
+      if (_mn._soldiers && m._soldiers && !VEHICLE_GUN[m._role]) {
+        _mn._soldiers.push(...m._soldiers); _mn._soldiers = _mn._soldiers.map((s,i) => ({...s,id:i}));
+        _mn._maxAmmo += m._maxAmmo ?? 0; _mn._ammo = Math.min((_mn._ammo??0) + (m._ammo??0), _mn._maxAmmo);
+      } else { _mn._ammo = Math.min((_mn._ammo??0) + (m._ammo??0), _mn._maxAmmo ?? 999); }
+      _mn.setIcon(soldierIcon(_mn._side, _mn._count, _mn._role));
+      fbSyncAnyUnit(_mn); removeUnit(m);
+      showToast(`Units merged — ${_mn._count} total`, '#66bb6a');
+      activeMarker = _mn; activePanel = _mn; renderPanel();
+    }
+  }
   else if (action === 'disengage') {
     // Attacker voluntarily stops the fight
     endFight(m);
@@ -3459,8 +3493,9 @@ window._pa = function(action) {
   else if (action === 'mavic-fly-zone') {
     if (!m._mavicAorPoly?.length) return;
     cancelDraw();
-    const _pt = randomPtInPoly(m._mavicAorPoly);
-    launchMavicScan(m, L.latLng(_pt[0], _pt[1]));
+    const _ctr = polygonCentroid(m._mavicAorPoly);
+    launchMavicScan(m, L.latLng(_ctr[0], _ctr[1]));
+    if (m._mavicMission) { m._mavicMission.hoverSec = 86400; m._mavicMission.hoverUntilBattery = true; }
   }
   else if (action === 'toggle-auto-batt') {
     m._autoBatterySwap = !m._autoBatterySwap;
@@ -5002,10 +5037,11 @@ function launchMavicScan(unit, latlng) {
 
 // ── Mavic scan ────────────────────────────────────────────────
 function doReconScan(unit) {
-  // AoR-based repeat: fly to a random point inside the drawn recon polygon
+  // AoR-based repeat: fly to centroid of drawn recon polygon
   if (unit._mavicAorPoly?.length >= 3) {
-    const _pt = randomPtInPoly(unit._mavicAorPoly);
-    launchMavicScan(unit, L.latLng(_pt[0], _pt[1]));
+    const _ctr = polygonCentroid(unit._mavicAorPoly);
+    launchMavicScan(unit, L.latLng(_ctr[0], _ctr[1]));
+    if (unit._mavicMission) { unit._mavicMission.hoverSec = 86400; unit._mavicMission.hoverUntilBattery = true; }
     return;
   }
   // If the unit has a saved patrol route, repeat the full patrol
@@ -5239,8 +5275,18 @@ setInterval(() => {
     } else if (mis.phase === 'scanning') {
       // Drain hover battery in real time
       m._mavicBattery = Math.max(0, m._mavicBattery - MAVIC_HOVER_BATT_PER_SEC * 0.1);
+      // For zone missions: return as soon as battery won't cover trip home
+      if (mis.hoverUntilBattery) {
+        const _rDist = segMeters([mis.lat, mis.lng], [mis.homeLat, mis.homeLng]);
+        const _rNeed = mavicFlightBattCost(_rDist) + MAVIC_BATT_SAFETY;
+        if (m._mavicBattery <= _rNeed) mis.scanEndsAt = now_m - 1; // force return
+        const _hovBattLeft = Math.max(0, m._mavicBattery - _rNeed);
+        const _hovSecLeft = _hovBattLeft / MAVIC_HOVER_BATT_PER_SEC;
+        mis.droneMarker.setTooltipContent(`Scanning · batt ${Math.round(m._mavicBattery)}% · ${_hovSecLeft.toFixed(0)}s left`);
+      } else {
       const remSec = Math.max(0, (mis.scanEndsAt - now_m) / 1000);
       mis.droneMarker.setTooltipContent(`Scanning ${remSec.toFixed(1)}s`);
+      }
       // Continuous detection — every tick (100ms real) the operator has a chance to spot each target.
       // Probability per tick is derived from FOV position + terrain cover; spotted units stay flagged ~3s game time.
       const cPos = [mis.dstLat, mis.dstLng];
@@ -7022,7 +7068,7 @@ function openFBConfig() {
   document.body.appendChild(panel);
 }
 
-const VERSION = '2026-09-17-RESTORE6';
+const VERSION = '2026-09-17-RESTORE7';
   const GLOBAL_RESET_TS = 1787415591303; // force all sessions to reset on this push
   const SPAWN_KEY = '2026-09-16-v21'; // change to force a new unit layout
   let _spawnUidCounter = -1; // >=0 during seeded spawn; -1 = normal random UIDs
@@ -7032,6 +7078,34 @@ const VERSION = '2026-09-17-RESTORE6';
     return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
   }
 console.log('Tactical Map v' + VERSION);
+// ── IFV/APC hold-to-fire burst ────────────────────────────────────
+let _vBurstInterval = null;
+window._vBurstStart = function(uid) {
+  const _bu = allMarkers.find(m => m._uid === uid);
+  if (!_bu) return;
+  function _doShot() {
+    if (!allMarkers.includes(_bu) || _bu._ammo <= 0) { window._vBurstStop(); return; }
+    if ((_bu._reloadingUntil ?? 0) > Date.now()) return;
+    const _be = allMarkers.filter(e => e._side !== _bu._side && (e._spottedUntil ?? 0) > Date.now()
+      && segMeters(markerPos(e), markerPos(_bu)) <= unitRangeM(_bu))
+      .sort((a,b) => segMeters(markerPos(a), markerPos(_bu)) - segMeters(markerPos(b), markerPos(_bu)));
+    if (!_be.length) return;
+    const _bp = markerPos(_be[0]);
+    const _gun = VEHICLE_GUN[_bu._role];
+    const _scM = Math.min(8, segMeters(markerPos(_bu), _bp) / 120);
+    const _ang = Math.random() * Math.PI * 2;
+    const _r = Math.random() * _scM;
+    const _fll = L.latLng(_bp[0] + _r * Math.cos(_ang) / 111320, _bp[1] + _r * Math.sin(_ang) / (111320 * Math.cos(_bp[0] * Math.PI / 180)));
+    executeHEFire(_bu, _fll);
+    if (activePanel === _bu) renderPanel();
+  }
+  _doShot();
+  _vBurstInterval = setInterval(_doShot, VEHICLE_GUN[_bu._role]?.burstFireMs ?? 300);
+};
+window._vBurstStop = function() {
+  if (_vBurstInterval) { clearInterval(_vBurstInterval); _vBurstInterval = null; }
+};
+
 function _refreshCasBox() {
   if (!userSide) return;
   const box = document.getElementById('cas-box');
@@ -7152,14 +7226,17 @@ function tdpSpawn(dp, now) {
   if (atTDP) {
     // Merge new spawn into existing unit
     atTDP._count += spawnCount;
-    if (atTDP._soldiers) {
+    if (atTDP._soldiers && !VEHICLE_GUN[dp.role]) {
+      // Infantry: add soldier compositions
       const newSols = randomComposition(spawnCount);
       atTDP._soldiers.push(...newSols);
       atTDP._soldiers = atTDP._soldiers.map((s, i) => ({ ...s, id: i })); // keep IDs unique
       atTDP._maxAmmo += newSols.reduce((s, sol) => s + SOLDIER_ROLES[sol.role].ammo, 0);
       atTDP._ammo    = Math.min(atTDP._ammo + newSols.reduce((s, sol) => s + sol.ammo, 0), atTDP._maxAmmo);
     } else {
-      atTDP._ammo    = Math.min((atTDP._ammo ?? 0) + spawnCount * 8, atTDP._maxAmmo ?? 999);
+      // Vehicle or non-soldier unit: add proportional ammo
+      const _spawnAmmo = Math.round((atTDP._maxAmmo ?? 30) * 0.65);
+      atTDP._ammo = Math.min((atTDP._ammo ?? 0) + _spawnAmmo, atTDP._maxAmmo ?? 999);
     }
     atTDP.setIcon(soldierIcon(atTDP._side, atTDP._count, atTDP._role));
     // If route set and unit hasn't left yet, assign route
